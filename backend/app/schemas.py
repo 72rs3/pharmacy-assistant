@@ -45,7 +45,7 @@ class MedicineBase(BaseModel):
 
 
 class MedicineCreate(MedicineBase):
-    pharmacy_id: int
+    pharmacy_id: Optional[int] = None
 
 
 class Medicine(MedicineBase):

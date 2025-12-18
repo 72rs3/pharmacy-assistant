@@ -7,6 +7,7 @@ export default function Register() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [pharmacyName, setPharmacyName] = useState("");
+  const [pharmacyDomain, setPharmacyDomain] = useState("");
   const [isOwner, setIsOwner] = useState(false);
   const navigate = useNavigate();
 
@@ -20,6 +21,7 @@ export default function Register() {
         password,
         full_name: fullName,
         pharmacy_name: isOwner ? pharmacyName : null,
+        pharmacy_domain: isOwner ? pharmacyDomain || null : null,
       });
       alert("Account created successfully!");
       navigate("/login");
@@ -67,13 +69,21 @@ export default function Register() {
       />
 
       {isOwner && (
-        <input
-          type="text"
-          placeholder="Pharmacy name"
-          value={pharmacyName}
-          onChange={(event) => setPharmacyName(event.target.value)}
-          required
-        />
+        <>
+          <input
+            type="text"
+            placeholder="Pharmacy name"
+            value={pharmacyName}
+            onChange={(event) => setPharmacyName(event.target.value)}
+            required
+          />
+          <input
+            type="text"
+            placeholder="Pharmacy domain (optional, e.g. sunrise.local)"
+            value={pharmacyDomain}
+            onChange={(event) => setPharmacyDomain(event.target.value)}
+          />
+        </>
       )}
 
       <button type="submit">Register</button>

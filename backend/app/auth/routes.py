@@ -26,9 +26,23 @@ def _create_user(user_in: schemas.UserCreate, db: Session) -> models.User:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Pharmacy name already registered",
             )
+
+        pharmacy_domain = None
+        if user_in.pharmacy_domain:
+            pharmacy_domain = user_in.pharmacy_domain.strip().lower()
+            if pharmacy_domain:
+                existing_domain = (
+                    db.query(models.Pharmacy).filter(models.Pharmacy.domain == pharmacy_domain).first()
+                )
+                if existing_domain:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Pharmacy domain already registered",
+                    )
+
         pharmacy = crud.create_pharmacy(
             db=db,
-            pharmacy=app_schemas.PharmacyCreate(name=user_in.pharmacy_name),
+            pharmacy=app_schemas.PharmacyCreate(name=user_in.pharmacy_name, domain=pharmacy_domain),
         )
 
     hashed_pw = utils.hash_password(user_in.password)
