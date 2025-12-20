@@ -78,6 +78,8 @@ cors_origins = _split_csv(os.getenv("CORS_ORIGINS")) or [
     "http://127.0.0.1:5173",
 ]
 cors_origin_regex = os.getenv("CORS_ALLOW_ORIGIN_REGEX") or r"^https?://([a-z0-9-]+\.)*localhost(:\d+)?$"
+# `.env` files often double-escape backslashes (e.g. `\\d` instead of `\d`); normalize so CORS preflight works.
+cors_origin_regex = cors_origin_regex.replace("\\\\", "\\")
 
 app.add_middleware(
     CORSMiddleware,

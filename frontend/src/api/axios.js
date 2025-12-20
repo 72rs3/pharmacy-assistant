@@ -15,9 +15,10 @@ api.interceptors.request.use((config) => {
     config.headers.Authorization = `Bearer ${token}`;
   }
 
-  const domain =
-    localStorage.getItem("pharmacy_domain") ||
-    (typeof window !== "undefined" ? window.location.hostname?.toLowerCase() : null);
+  const domain = (() => {
+    if (isPortalHost()) return localStorage.getItem("pharmacy_domain");
+    return typeof window !== "undefined" ? window.location.hostname?.toLowerCase() : null;
+  })();
   if (domain) {
     config.headers = config.headers ?? {};
     config.headers["X-Pharmacy-Domain"] = domain;
