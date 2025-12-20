@@ -53,3 +53,40 @@ def get_active_pharmacy(pharmacy: models.Pharmacy = Depends(get_current_pharmacy
 
 def get_active_pharmacy_id(pharmacy: models.Pharmacy = Depends(get_active_pharmacy)) -> int:
     return pharmacy.id
+
+
+def get_public_pharmacy(
+    request: Request,
+    db: Session = Depends(get_db),
+    pharmacy_domain: str | None = Header(None, alias="X-Pharmacy-Domain"),
+    forwarded_host: str | None = Header(None, alias="X-Forwarded-Host"),
+) -> models.Pharmacy:
+    """
+    Public tenant resolver for customer-facing endpoints.
+
+    Security rule: do NOT accept X-Pharmacy-ID here (prevents tenant discovery by ID guessing).
+    """
+
+    domain = pharmacy_domain or forwarded_host or request.headers.get("host")
+    if not domain:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pharmacy not found")
+
+    normalized = _normalize_domain(domain)
+    pharmacy = db.query(models.Pharmacy).filter(models.Pharmacy.domain == normalized).first()
+    if pharmacy is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pharmacy not found")
+    return pharmacy
+
+
+def get_active_public_pharmacy(
+    pharmacy: models.Pharmacy = Depends(get_public_pharmacy),
+) -> models.Pharmacy:
+    if not pharmacy.is_active or pharmacy.status != "APPROVED":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pharmacy not found")
+    return pharmacy
+
+
+def get_active_public_pharmacy_id(
+    pharmacy: models.Pharmacy = Depends(get_active_public_pharmacy),
+) -> int:
+    return pharmacy.id

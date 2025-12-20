@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict
@@ -93,7 +94,41 @@ class OrderCreate(OrderBase):
 class Order(OrderBase):
     id: int
     pharmacy_id: int
+    order_date: datetime | None = None
     items: List[OrderItem] = []
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CustomerOrderItemCreate(BaseModel):
+    medicine_id: int
+    quantity: int
+
+
+class CustomerOrderCreate(BaseModel):
+    customer_name: str
+    customer_phone: str
+    customer_address: str
+    customer_notes: str | None = None
+    items: List[CustomerOrderItemCreate]
+
+
+class CustomerOrderCreated(BaseModel):
+    order_id: int
+    tracking_code: str
+    status: str
+    payment_method: str
+    payment_status: str
+    order_date: datetime
+    requires_prescription: bool
+
+
+class CustomerOrderSummary(BaseModel):
+    id: int
+    status: str
+    payment_method: str
+    payment_status: str
+    order_date: datetime
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -136,9 +171,24 @@ class Prescription(PrescriptionBase):
     id: int
     order_id: int
     reviewer_id: Optional[int] = None
+    original_filename: Optional[str] = None
+    content_type: Optional[str] = None
     medicines: List[PrescriptionMedicine] = []
+    upload_date: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class PrescriptionStatusOut(BaseModel):
+    id: int
+    status: str
+    upload_date: datetime | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PrescriptionReviewIn(BaseModel):
+    status: str  # APPROVED / REJECTED
 
 
 # --------------------
@@ -149,7 +199,7 @@ class Prescription(PrescriptionBase):
 class AppointmentBase(BaseModel):
     customer_id: str
     type: str
-    scheduled_time: str  # ISO datetime string
+    scheduled_time: datetime
     status: str = "PENDING"
     vaccine_name: Optional[str] = None
 
@@ -163,6 +213,28 @@ class Appointment(AppointmentBase):
     pharmacy_id: int
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class CustomerAppointmentCreate(BaseModel):
+    customer_name: str
+    customer_phone: str
+    type: str
+    scheduled_time: datetime
+    vaccine_name: str | None = None
+
+
+class CustomerAppointmentOut(BaseModel):
+    id: int
+    type: str
+    scheduled_time: datetime
+    status: str
+    vaccine_name: str | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CustomerAppointmentCreated(CustomerAppointmentOut):
+    tracking_code: str
 
 
 # --------------------

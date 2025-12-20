@@ -1,47 +1,86 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Navigate, useNavigate } from "react-router-dom";
 import api from "../api/axios";
 import { useAuth } from "../context/AuthContext";
+import { isPortalHost } from "../utils/tenant";
 
 export default function Login() {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const { login } = useAuth();
   const navigate = useNavigate();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleLogin = async (event) => {
+  if (!isPortalHost()) {
+    return <Navigate to="/" replace />;
+  }
+
+  const handleSubmit = async (event) => {
     event.preventDefault();
+    setError("");
+    setIsSubmitting(true);
 
     try {
-      const response = await api.post("/auth/login", { email, password });
-      login(response.data.access_token);
-      alert("Login successful!");
-      navigate("/");
-    } catch (error) {
-      console.error(error);
-      alert("Login failed!");
+      const res = await api.post("/auth/login", { email, password });
+      login(res.data?.access_token);
+      navigate("/portal", { replace: true });
+    } catch (e) {
+      setError(e?.response?.data?.detail ?? "Login failed");
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   return (
-    <form onSubmit={handleLogin}>
-      <h2>Login</h2>
+    <div className="container">
+      <div className="narrow">
+        <h1 className="page-title">Portal login</h1>
+        <p className="page-subtitle">Sign in as a pharmacy owner or admin.</p>
 
-      <input
-        type="email"
-        placeholder="Email"
-        value={email}
-        onChange={(event) => setEmail(event.target.value)}
-      />
+        <div className="card" style={{ marginTop: "1.25rem" }}>
+          <form className="form" onSubmit={handleSubmit}>
+            {error ? <div className="alert alert-danger">{error}</div> : null}
 
-      <input
-        type="password"
-        placeholder="Password"
-        value={password}
-        onChange={(event) => setPassword(event.target.value)}
-      />
+            <div className="form-row">
+              <label className="label" htmlFor="email">
+                Email
+              </label>
+              <input
+                id="email"
+                className="input"
+                type="email"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                required
+                autoComplete="email"
+              />
+            </div>
 
-      <button type="submit">Login</button>
-    </form>
+            <div className="form-row">
+              <label className="label" htmlFor="password">
+                Password
+              </label>
+              <input
+                id="password"
+                className="input"
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                required
+                autoComplete="current-password"
+              />
+            </div>
+
+            <div className="actions">
+              <button className="btn btn-primary" type="submit" disabled={isSubmitting}>
+                {isSubmitting ? "Signing in..." : "Login"}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
   );
 }
+

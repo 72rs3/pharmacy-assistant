@@ -1,14 +1,16 @@
-from datetime import datetime, timedelta
 import hashlib
+import os
+from datetime import datetime, timedelta
 from typing import Optional
 
 import bcrypt
 from jose import jwt
 
-# In a real deployment these should come from environment variables
-SECRET_KEY = "very-secret-key-change-this"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 1 day default
+
+# IMPORTANT: Set a strong secret in production.
+SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-change-me")
 
 def _password_bytes(password: str) -> bytes:
     password_bytes = password.encode("utf-8")

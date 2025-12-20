@@ -17,6 +17,8 @@ export function AuthProvider({ children }) {
     setToken(null);
     setUser(null);
     localStorage.removeItem("token");
+    localStorage.removeItem("pharmacy_id");
+    localStorage.removeItem("pharmacy_domain");
   };
 
   useEffect(() => {
@@ -31,12 +33,21 @@ export function AuthProvider({ children }) {
       setIsLoadingUser(true);
       try {
         const response = await api.get("/auth/me");
-        if (isActive) setUser(response.data);
+        if (isActive) {
+          const nextUser = response.data;
+          setUser(nextUser);
+          if (nextUser?.pharmacy_id) {
+            localStorage.setItem("pharmacy_id", String(nextUser.pharmacy_id));
+          } else {
+            localStorage.removeItem("pharmacy_id");
+          }
+        }
       } catch {
         if (isActive) {
           setUser(null);
           setToken(null);
           localStorage.removeItem("token");
+          localStorage.removeItem("pharmacy_id");
         }
       } finally {
         if (isActive) setIsLoadingUser(false);
@@ -55,6 +66,7 @@ export function AuthProvider({ children }) {
       user,
       isLoadingUser,
       isAdmin: Boolean(user?.is_admin),
+      isOwner: Boolean(user?.pharmacy_id) && !Boolean(user?.is_admin),
       login,
       logout,
     }),

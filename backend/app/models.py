@@ -82,6 +82,10 @@ class Order(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     customer_id = Column(String, nullable=False)
+    customer_name = Column(String, nullable=True)
+    customer_phone = Column(String, nullable=True)
+    customer_address = Column(Text, nullable=True)
+    customer_notes = Column(Text, nullable=True)
     status = Column(String, nullable=False, default="PENDING")
     payment_method = Column(String, nullable=False, default="COD")
     payment_status = Column(String, nullable=False, default="UNPAID")
@@ -114,6 +118,8 @@ class Prescription(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     file_path = Column(String, nullable=False)
+    original_filename = Column(String, nullable=True)
+    content_type = Column(String, nullable=True)
     status = Column(String, nullable=False, default="PENDING")
     upload_date = Column(DateTime, default=datetime.utcnow, nullable=False)
 
@@ -146,6 +152,8 @@ class Appointment(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     customer_id = Column(String, nullable=False)
+    customer_name = Column(String, nullable=True)
+    customer_phone = Column(String, nullable=True)
     type = Column(String, nullable=False)
     scheduled_time = Column(DateTime, nullable=False)
     status = Column(String, nullable=False, default="PENDING")

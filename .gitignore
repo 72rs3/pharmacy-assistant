@@ -17,4 +17,9 @@ backend/venv/
 # Environment files
 .env
 .env.*
+!.env.example
+
+# Local exports / notes
+share.html
+ts and tenant deps*
 
