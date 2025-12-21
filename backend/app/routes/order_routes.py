@@ -116,6 +116,19 @@ def list_customer_orders(
     )
 
 
+@router.get("/owner", response_model=list[schemas.Order])
+def list_owner_orders(
+    current_user: models.User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    return (
+        db.query(models.Order)
+        .filter(models.Order.pharmacy_id == current_user.pharmacy_id)
+        .order_by(models.Order.order_date.desc())
+        .all()
+    )
+
+
 @router.get("/{order_id}", response_model=schemas.Order)
 def get_customer_order(
     order_id: int,
@@ -136,19 +149,6 @@ def get_customer_order(
     if order.customer_id != tracking_code:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid tracking code")
     return order
-
-
-@router.get("/owner", response_model=list[schemas.Order])
-def list_owner_orders(
-    current_user: models.User = Depends(require_owner),
-    db: Session = Depends(get_db),
-):
-    return (
-        db.query(models.Order)
-        .filter(models.Order.pharmacy_id == current_user.pharmacy_id)
-        .order_by(models.Order.order_date.desc())
-        .all()
-    )
 
 
 @router.post("/{order_id}/approve", response_model=schemas.Order)
@@ -222,4 +222,3 @@ def cancel_order(
     db.commit()
     db.refresh(order)
     return order
-
