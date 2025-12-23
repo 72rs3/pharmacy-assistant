@@ -80,6 +80,10 @@ class OrderItem(OrderItemBase):
 
 class OrderBase(BaseModel):
     customer_id: str
+    customer_name: str | None = None
+    customer_phone: str | None = None
+    customer_address: str | None = None
+    customer_notes: str | None = None
     status: str = "PENDING"
     payment_method: str = "COD"
     payment_status: str = "UNPAID"
@@ -191,6 +195,10 @@ class PrescriptionReviewIn(BaseModel):
     status: str  # APPROVED / REJECTED
 
 
+class AppointmentStatusIn(BaseModel):
+    status: str  # PENDING / CONFIRMED / CANCELLED / COMPLETED
+
+
 # --------------------
 # Appointments
 # --------------------
@@ -243,10 +251,15 @@ class CustomerAppointmentCreated(CustomerAppointmentOut):
 
 
 class AIInteractionBase(BaseModel):
+    customer_id: str | None = None
     customer_query: str
     ai_response: str
     confidence_score: float
     escalated_to_human: bool = False
+    created_at: datetime | None = None
+    owner_reply: str | None = None
+    owner_replied_at: datetime | None = None
+    owner_id: int | None = None
 
 
 class AIInteractionCreate(AIInteractionBase):
@@ -274,3 +287,32 @@ class AILog(AILogBase):
     pharmacy_id: int
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# --------------------
+# AI Chat (API)
+# --------------------
+
+
+class AIChatIn(BaseModel):
+    message: str
+
+
+class AICitation(BaseModel):
+    doc_id: int
+    chunk_id: int
+    snippet: str
+
+
+class AIChatOut(BaseModel):
+    interaction_id: int
+    customer_id: str
+    answer: str
+    citations: list[AICitation] = []
+    confidence_score: float
+    escalated_to_human: bool
+    created_at: datetime
+
+
+class AIEscalationReplyIn(BaseModel):
+    reply: str

@@ -32,3 +32,13 @@ class Token(BaseModel):
 
 class TokenData(BaseModel):
     user_id: int | None = None
+
+
+class PasswordChangeIn(BaseModel):
+    current_password: str
+    new_password: str
+
+
+class AdminPasswordResetIn(BaseModel):
+    email: EmailStr
+    new_password: str

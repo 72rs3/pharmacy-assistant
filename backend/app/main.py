@@ -7,6 +7,7 @@ from sqlalchemy import inspect
 
 from app.db import Base, engine, ensure_sqlite_schema
 from app import models
+from app.ai.provider_factory import get_ai_provider
 from app.auth.routes import router as auth_router
 from app.auth.bootstrap import ensure_admin_user
 from app.routes.pharmacy_routes import router as pharmacy_router
@@ -14,6 +15,7 @@ from app.routes.medicine_routes import router as medicine_router
 from app.routes.order_routes import router as order_router
 from app.routes.prescription_routes import router as prescription_router
 from app.routes.appointment_routes import router as appointment_router
+from app.routes.ai_routes import router as ai_router
 
 def _split_csv(value: str | None) -> list[str]:
     if not value:
@@ -39,6 +41,8 @@ def _required_tables() -> set[str]:
         "appointments",
         "ai_interactions",
         "ai_logs",
+        "documents",
+        "document_chunks",
     }
 
 
@@ -69,7 +73,15 @@ def init_database() -> None:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_database()
-    yield
+    try:
+        yield
+    finally:
+        # Avoid creating a provider just to close it.
+        if get_ai_provider.cache_info().currsize > 0:
+            provider = get_ai_provider()
+            close = getattr(provider, "aclose", None)
+            if callable(close):
+                await close()
 
 app = FastAPI(title="AI-Powered Pharmacy Assistant Backend", lifespan=lifespan)
 
@@ -96,6 +108,7 @@ app.include_router(medicine_router)
 app.include_router(order_router)
 app.include_router(prescription_router)
 app.include_router(appointment_router)
+app.include_router(ai_router)
 
 
 @app.get("/")

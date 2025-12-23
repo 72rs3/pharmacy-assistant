@@ -5,13 +5,16 @@ import Login from "./pages/Login";
 import Register from "./pages/Register";
 import AdminRoute from "./components/AdminRoute";
 import AdminPharmacies from "./pages/AdminPharmacies";
+import AdminAILogs from "./pages/AdminAILogs";
 import OwnerRoute from "./components/OwnerRoute";
 import PortalGate from "./components/PortalGate";
 import PortalHome from "./pages/PortalHome";
+import PortalSettings from "./pages/PortalSettings";
 import OwnerInventory from "./pages/OwnerInventory";
 import OwnerOrders from "./pages/OwnerOrders";
 import OwnerPrescriptions from "./pages/OwnerPrescriptions";
 import OwnerAppointments from "./pages/OwnerAppointments";
+import OwnerEscalations from "./pages/OwnerEscalations";
 
 export default function App() {
   return (
@@ -27,6 +30,14 @@ export default function App() {
               element={
                 <PortalGate>
                   <PortalHome />
+                </PortalGate>
+              }
+            />
+            <Route
+              path="/portal/settings"
+              element={
+                <PortalGate>
+                  <PortalSettings />
                 </PortalGate>
               }
             />
@@ -53,6 +64,16 @@ export default function App() {
                 <PortalGate>
                   <AdminRoute>
                     <AdminPharmacies />
+                  </AdminRoute>
+                </PortalGate>
+              }
+            />
+            <Route
+              path="/portal/admin/ai-logs"
+              element={
+                <PortalGate>
+                  <AdminRoute>
+                    <AdminAILogs />
                   </AdminRoute>
                 </PortalGate>
               }
@@ -94,6 +115,16 @@ export default function App() {
                 <PortalGate>
                   <OwnerRoute>
                     <OwnerAppointments />
+                  </OwnerRoute>
+                </PortalGate>
+              }
+            />
+            <Route
+              path="/portal/owner/escalations"
+              element={
+                <PortalGate>
+                  <OwnerRoute>
+                    <OwnerEscalations />
                   </OwnerRoute>
                 </PortalGate>
               }

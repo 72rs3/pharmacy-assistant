@@ -87,7 +87,7 @@ def list_owner_appointments(
 @router.post("/{appointment_id}/status", response_model=schemas.Appointment)
 def update_appointment_status(
     appointment_id: int,
-    status_in: schemas.PrescriptionReviewIn,
+    status_in: schemas.AppointmentStatusIn,
     db: Session = Depends(get_db),
     pharmacy_id: int = Depends(get_current_pharmacy_id),
     _=Depends(require_pharmacy_owner),
@@ -105,4 +105,3 @@ def update_appointment_status(
     db.commit()
     db.refresh(appointment)
     return appointment
-

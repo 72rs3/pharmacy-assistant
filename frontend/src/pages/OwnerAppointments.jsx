@@ -89,7 +89,7 @@ export default function OwnerAppointments() {
                 <div>
                   <h2 className="card-title">Appointment #{appt.id}</h2>
                   <p className="card-description">
-                    {appt.type} · {formatDate(appt.scheduled_time)}
+                    {appt.type} • {formatDate(appt.scheduled_time)}
                   </p>
                 </div>
                 <span className={statusTone(appt.status)}>{appt.status}</span>
@@ -129,4 +129,3 @@ export default function OwnerAppointments() {
     </div>
   );
 }
-

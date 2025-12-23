@@ -113,6 +113,13 @@ def ensure_sqlite_schema(db_engine: Engine) -> None:
             add_column_if_missing("appointments", "customer_name", "customer_name VARCHAR")
             add_column_if_missing("appointments", "customer_phone", "customer_phone VARCHAR")
 
+        if "ai_interactions" in tables:
+            add_column_if_missing("ai_interactions", "customer_id", "customer_id VARCHAR")
+            add_column_if_missing("ai_interactions", "created_at", "created_at DATETIME")
+            add_column_if_missing("ai_interactions", "owner_reply", "owner_reply TEXT")
+            add_column_if_missing("ai_interactions", "owner_replied_at", "owner_replied_at DATETIME")
+            add_column_if_missing("ai_interactions", "owner_id", "owner_id INTEGER")
+
 
 def get_db():
     db = SessionLocal()

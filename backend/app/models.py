@@ -3,6 +3,7 @@ from sqlalchemy.orm import relationship
 from datetime import datetime
 
 from app.db import Base
+from app.ai.types import Embedding
 
 
 class Pharmacy(Base):
@@ -56,6 +57,11 @@ class User(Base):
     pharmacy = relationship("Pharmacy", back_populates="owners")
 
     reviewed_prescriptions = relationship("Prescription", back_populates="reviewer")
+    handled_ai_interactions = relationship(
+        "AIInteraction",
+        back_populates="owner",
+        foreign_keys="AIInteraction.owner_id",
+    )
 
 
 class Medicine(Base):
@@ -167,13 +173,23 @@ class AIInteraction(Base):
     __tablename__ = "ai_interactions"
 
     id = Column(Integer, primary_key=True, index=True)
+    customer_id = Column(String, nullable=False, index=True)
     customer_query = Column(Text, nullable=False)
     ai_response = Column(Text, nullable=False)
     confidence_score = Column(Float, nullable=False)
     escalated_to_human = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    owner_reply = Column(Text, nullable=True)
+    owner_replied_at = Column(DateTime, nullable=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=True)
 
     pharmacy_id = Column(Integer, ForeignKey("pharmacies.id"), nullable=False)
     pharmacy = relationship("Pharmacy", back_populates="ai_interactions")
+    owner = relationship(
+        "User",
+        back_populates="handled_ai_interactions",
+        foreign_keys=[owner_id],
+    )
 
 
 class AILog(Base):
@@ -186,3 +202,33 @@ class AILog(Base):
 
     pharmacy_id = Column(Integer, ForeignKey("pharmacies.id"), nullable=False)
     pharmacy = relationship("Pharmacy", back_populates="ai_logs")
+
+
+class Document(Base):
+    __tablename__ = "documents"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, nullable=False)
+    source_type = Column(String, nullable=False)  # medicine / pharmacy / faq / upload
+    source_key = Column(String, nullable=True)  # e.g. medicine:{id}
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    pharmacy_id = Column(Integer, ForeignKey("pharmacies.id"), nullable=False, index=True)
+
+    chunks = relationship("DocumentChunk", back_populates="document")
+
+
+class DocumentChunk(Base):
+    __tablename__ = "document_chunks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    document_id = Column(Integer, ForeignKey("documents.id"), nullable=False, index=True)
+    chunk_index = Column(Integer, nullable=False, default=0)
+    content = Column(Text, nullable=False)
+    # Default matches `text-embedding-3-small` output dimension.
+    embedding = Column(Embedding(1536), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    pharmacy_id = Column(Integer, ForeignKey("pharmacies.id"), nullable=False, index=True)
+
+    document = relationship("Document", back_populates="chunks")

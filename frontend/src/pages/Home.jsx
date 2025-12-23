@@ -6,6 +6,7 @@ import { isPortalHost } from "../utils/tenant";
 
 const ORDER_TRACKING_KEY = "customer_order_tracking";
 const APPOINTMENT_TRACKING_KEY = "customer_appointment_tracking";
+const CHAT_ID_KEY = "customer_chat_id";
 
 const formatDate = (value) => {
   if (!value) return "";
@@ -65,6 +66,17 @@ export default function Home() {
   const [appointmentError, setAppointmentError] = useState("");
   const [appointments, setAppointments] = useState([]);
   const [appointmentsLoading, setAppointmentsLoading] = useState(false);
+
+  const [chatId, setChatId] = useState(() =>
+    typeof window !== "undefined" ? localStorage.getItem(CHAT_ID_KEY) ?? "" : ""
+  );
+  const [chatMessages, setChatMessages] = useState([]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
+  const [chatError, setChatError] = useState("");
+
+  const hasMedicines = medicines.length > 0;
+  const inventoryEmpty = !isLoading && medicines.length === 0 && !medicineError;
 
   const filteredMedicines = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -315,6 +327,88 @@ export default function Home() {
     await loadAppointments(appointmentTrackingCode);
   };
 
+  const loadChatHistory = async (existingChatId) => {
+    const code = (existingChatId ?? chatId).trim();
+    if (!code) {
+      setChatMessages([]);
+      return;
+    }
+
+    setChatLoading(true);
+    setChatError("");
+    try {
+      const res = await api.get("/ai/chat/my", {
+        headers: { "X-Chat-ID": code },
+      });
+      setChatMessages(res.data ?? []);
+    } catch (err) {
+      setChatMessages([]);
+      setChatError(err?.response?.data?.detail ?? "Failed to load chat");
+    } finally {
+      setChatLoading(false);
+    }
+  };
+
+  const sendChat = async (event) => {
+    event.preventDefault();
+    const message = chatInput.trim();
+    if (!message) return;
+
+    setChatLoading(true);
+    setChatError("");
+    try {
+      const res = await api.post(
+        "/ai/chat",
+        { message },
+        {
+          headers: chatId ? { "X-Chat-ID": chatId } : {},
+        }
+      );
+
+      const nextChatId = res.data?.customer_id ?? chatId;
+      if (nextChatId && nextChatId !== chatId) {
+        setChatId(nextChatId);
+        if (typeof window !== "undefined") {
+          localStorage.setItem(CHAT_ID_KEY, nextChatId);
+        }
+      }
+
+      setChatInput("");
+      await loadChatHistory(nextChatId);
+    } catch (err) {
+      setChatError(err?.response?.data?.detail ?? "Failed to send message");
+    } finally {
+      setChatLoading(false);
+    }
+  };
+
+  const startNewChat = () => {
+    setChatId("");
+    setChatMessages([]);
+    setChatError("");
+    setChatInput("");
+    if (typeof window !== "undefined") {
+      localStorage.removeItem(CHAT_ID_KEY);
+    }
+  };
+
+  useEffect(() => {
+    if (!pharmacy) return;
+    if (!chatId) return;
+    loadChatHistory(chatId);
+  }, [pharmacy?.id, chatId]);
+
+  useEffect(() => {
+    if (!pharmacy || !chatId) return;
+
+    const interval = setInterval(() => {
+      const hasPending = (chatMessages ?? []).some((m) => m.escalated_to_human && !m.owner_reply);
+      if (hasPending) loadChatHistory(chatId);
+    }, 6000);
+
+    return () => clearInterval(interval);
+  }, [pharmacy?.id, chatId, chatMessages]);
+
   if (!pharmacy) {
     return (
       <div className="container">
@@ -374,6 +468,12 @@ export default function Home() {
 
           <div className="grid" style={{ gap: "0.75rem" }}>
             {medicineError ? <div className="alert alert-danger">{medicineError}</div> : null}
+            {inventoryEmpty ? (
+              <div className="alert">
+                This pharmacy has not added its inventory yet. Please check back soon.
+                {isPortalHost() ? null : " If you are the owner, add medicines in the portal."}
+              </div>
+            ) : null}
 
             <input
               type="text"
@@ -381,6 +481,7 @@ export default function Home() {
               placeholder="Search by name or category"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
+              disabled={inventoryEmpty}
             />
 
             {isLoading && medicines.length === 0 ? <p className="help">Loading medicines...</p> : null}
@@ -396,9 +497,9 @@ export default function Home() {
                         {medicine.name} <span className="help">$ {medicine.price}</span>
                       </p>
                       <p className="list-item-meta">
-                        {medicine.category ? `Category: ${medicine.category} · ` : ""}
+                        {medicine.category ? `Category: ${medicine.category} • ` : ""}
                         {medicine.prescription_required ? "Prescription required" : "OTC"}
-                        {` · Stock: ${medicine.stock_level}`}
+                        {` • Stock: ${medicine.stock_level}`}
                       </p>
                     </div>
                     <div className="inline" style={{ flexWrap: "wrap", justifyContent: "flex-end" }}>
@@ -425,7 +526,9 @@ export default function Home() {
 
           <div className="grid" style={{ gap: "0.8rem" }}>
             {cart.length === 0 ? (
-              <p className="help">Add medicines from the list to get started.</p>
+              <p className="help">
+                {hasMedicines ? "Add medicines from the list to get started." : "Inventory is not available yet."}
+              </p>
             ) : (
               <ul className="list compact">
                 {cart.map((item) => (
@@ -433,7 +536,7 @@ export default function Home() {
                     <div>
                       <p className="list-item-title">{item.name}</p>
                       <p className="list-item-meta">
-                        ${item.price.toFixed(2)} · Qty {item.quantity}
+                        ${item.price.toFixed(2)} • Qty {item.quantity}
                       </p>
                     </div>
                     <div className="inline">
@@ -525,7 +628,7 @@ export default function Home() {
                     <div>
                       <p className="list-item-title">Order #{order.id}</p>
                       <p className="list-item-meta">
-                        {formatDate(order.order_date)} · {order.status}
+                        {formatDate(order.order_date)} • {order.status}
                       </p>
                     </div>
                     <button type="button" className="btn btn-ghost" onClick={() => loadOrderDetail(order.id)}>
@@ -549,7 +652,7 @@ export default function Home() {
                         <div>
                           <p className="list-item-title">Medicine #{item.medicine_id}</p>
                           <p className="list-item-meta">
-                            Qty {item.quantity} · ${item.unit_price.toFixed(2)} each
+                            Qty {item.quantity} • ${item.unit_price.toFixed(2)} each
                           </p>
                         </div>
                       </li>
@@ -676,7 +779,7 @@ export default function Home() {
                     <div>
                       <p className="list-item-title">{appt.type}</p>
                       <p className="list-item-meta">
-                        {formatDate(appt.scheduled_time)} · {appt.status}
+                        {formatDate(appt.scheduled_time)} • {appt.status}
                       </p>
                     </div>
                     {appt.vaccine_name ? <span className="badge">{appt.vaccine_name}</span> : null}
@@ -687,7 +790,84 @@ export default function Home() {
           </div>
         </section>
       </div>
+
+      <section className="card reveal" style={{ marginTop: "1.5rem" }}>
+        <header className="card-header">
+          <div>
+            <h2 className="card-title">AI assistant</h2>
+            <p className="card-description">
+              {hasMedicines
+                ? "Ask about medicines available in this pharmacy. Medical-risk questions are escalated to a pharmacist."
+                : "This pharmacy has not listed inventory yet. You can still ask about store details."}
+            </p>
+          </div>
+          <div className="inline" style={{ gap: "0.5rem" }}>
+            {chatId ? <span className="badge">Chat: {chatId}</span> : null}
+            <button type="button" className="btn btn-ghost" onClick={startNewChat}>
+              New chat
+            </button>
+          </div>
+        </header>
+
+        <div className="grid" style={{ gap: "0.75rem" }}>
+          {chatError ? <div className="alert alert-danger">{chatError}</div> : null}
+
+          <div className="card-subtle" style={{ maxHeight: "320px", overflow: "auto" }}>
+            {chatMessages.length === 0 ? (
+              <p className="help">
+                {hasMedicines
+                  ? "No messages yet. Ask about a medicine name (example: “Panadol”)."
+                  : "No messages yet. Inventory is not available yet."}
+              </p>
+            ) : (
+              <ul className="list compact">
+                {chatMessages.map((m) => (
+                  <li key={m.id} className="list-item compact">
+                    <div style={{ width: "100%" }}>
+                      <p className="list-item-title">You</p>
+                      <p className="help" style={{ whiteSpace: "pre-wrap" }}>{m.customer_query}</p>
+
+                      <p className="list-item-title" style={{ marginTop: "0.5rem" }}>AI</p>
+                      <p className="help" style={{ whiteSpace: "pre-wrap" }}>{m.ai_response}</p>
+
+                      {m.escalated_to_human ? (
+                        <div className="inline" style={{ gap: "0.5rem", marginTop: "0.35rem" }}>
+                          <span className="badge badge-warning">Escalated</span>
+                          {m.owner_reply ? (
+                            <span className="badge badge-success">Pharmacist replied</span>
+                          ) : (
+                            <span className="badge">Waiting for reply</span>
+                          )}
+                        </div>
+                      ) : null}
+
+                      {m.owner_reply ? (
+                        <div style={{ marginTop: "0.6rem" }}>
+                          <p className="list-item-title">Pharmacist</p>
+                          <p className="help" style={{ whiteSpace: "pre-wrap" }}>{m.owner_reply}</p>
+                        </div>
+                      ) : null}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <form className="inline" style={{ gap: "0.5rem" }} onSubmit={sendChat}>
+            <input
+              className="input"
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              placeholder="Type your question..."
+              disabled={chatLoading}
+            />
+            <button type="submit" className="btn btn-primary" disabled={chatLoading}>
+              {chatLoading ? "Sending..." : "Send"}
+            </button>
+          </form>
+        </div>
+      </section>
     </div>
   );
 }
-

@@ -52,14 +52,36 @@ export default function Navbar() {
                 >
                   Appointments
                 </NavLink>
+                <NavLink
+                  to="/portal/owner/escalations"
+                  className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}
+                >
+                  Escalations
+                </NavLink>
               </>
             ) : null}
             {isAdmin ? (
+              <>
+                <NavLink
+                  to="/portal/admin/pharmacies"
+                  className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}
+                >
+                  Admin
+                </NavLink>
+                <NavLink
+                  to="/portal/admin/ai-logs"
+                  className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}
+                >
+                  AI Logs
+                </NavLink>
+              </>
+            ) : null}
+            {token ? (
               <NavLink
-                to="/portal/admin/pharmacies"
+                to="/portal/settings"
                 className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}
               >
-                Admin
+                Settings
               </NavLink>
             ) : null}
           </nav>
