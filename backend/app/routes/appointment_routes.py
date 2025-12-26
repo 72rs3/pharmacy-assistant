@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app import models, schemas
-from app.auth.deps import require_owner, require_pharmacy_owner
+from app.auth.deps import require_approved_owner, require_pharmacy_owner
 from app.db import get_db
 from app.deps import get_active_public_pharmacy_id, get_current_pharmacy_id
 
@@ -73,7 +73,7 @@ def list_customer_appointments(
 
 @router.get("/owner", response_model=list[schemas.Appointment])
 def list_owner_appointments(
-    current_user: models.User = Depends(require_owner),
+    current_user: models.User = Depends(require_approved_owner),
     db: Session = Depends(get_db),
 ):
     return (

@@ -12,6 +12,7 @@ from app.auth.routes import router as auth_router
 from app.auth.bootstrap import ensure_admin_user
 from app.routes.pharmacy_routes import router as pharmacy_router
 from app.routes.medicine_routes import router as medicine_router
+from app.routes.product_routes import router as product_router
 from app.routes.order_routes import router as order_router
 from app.routes.prescription_routes import router as prescription_router
 from app.routes.appointment_routes import router as appointment_router
@@ -34,6 +35,7 @@ def _required_tables() -> set[str]:
         "pharmacies",
         "users",
         "medicines",
+        "products",
         "orders",
         "order_items",
         "prescriptions",
@@ -105,6 +107,7 @@ app.add_middleware(
 app.include_router(auth_router, prefix="/auth", tags=["Auth"])
 app.include_router(pharmacy_router)
 app.include_router(medicine_router)
+app.include_router(product_router)
 app.include_router(order_router)
 app.include_router(prescription_router)
 app.include_router(appointment_router)

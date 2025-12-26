@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import text
+from sqlalchemy import or_, text
 from sqlalchemy.orm import Session
 
 from app import models
@@ -128,6 +128,71 @@ def _is_follow_up_without_subject(message: str) -> bool:
     return len(subject_tokens) == 0
 
 
+def _medicine_text(medicine: models.Medicine) -> str:
+    rx = "Prescription required" if medicine.prescription_required else "OTC"
+    return "\n".join(
+        [
+            f"Medicine: {medicine.name}",
+            f"Category: {medicine.category or '-'}",
+            f"Price: {medicine.price}",
+            f"Stock: {medicine.stock_level}",
+            f"Rx: {rx}",
+            f"Dosage: {medicine.dosage or '-'}",
+            f"Side effects: {medicine.side_effects or '-'}",
+        ]
+    )
+
+
+def _score_medicine(medicine: models.Medicine, tokens: list[str], normalized_query: str) -> float:
+    if not tokens:
+        return 0.0
+    name = (medicine.name or "").lower()
+    category = (medicine.category or "").lower()
+    if normalized_query and normalized_query == name:
+        return 0.95
+    if normalized_query and normalized_query in name:
+        return 0.9
+    if any(token in name for token in tokens):
+        return 0.85
+    if category and any(token in category for token in tokens):
+        return 0.6
+    return 0.0
+
+
+def _retrieve_inventory(
+    db: Session, pharmacy_id: int, query: str, *, top_k: int
+) -> list[RetrievedChunk]:
+    tokens = [t for t in _normalize_tokens(query) if len(t) >= 3 and t not in _STOPWORDS]
+    if not tokens:
+        return []
+    normalized_query = " ".join(tokens)
+
+    query_builder = db.query(models.Medicine).filter(models.Medicine.pharmacy_id == pharmacy_id)
+    if tokens:
+        filters = [models.Medicine.name.ilike(f"%{token}%") for token in tokens]
+        filters += [models.Medicine.category.ilike(f"%{token}%") for token in tokens]
+        query_builder = query_builder.filter(or_(*filters))
+    medicines = query_builder.limit(max(top_k * 4, 8)).all()
+
+    scored: list[RetrievedChunk] = []
+    for med in medicines:
+        score = _score_medicine(med, tokens, normalized_query)
+        if score <= 0:
+            continue
+        scored.append(
+            RetrievedChunk(
+                id=-int(med.id),
+                document_id=0,
+                chunk_index=0,
+                content=_medicine_text(med),
+                source=f"Medicine: {med.name}",
+                score=score,
+            )
+        )
+    scored.sort(key=lambda item: item.score, reverse=True)
+    return scored[:top_k]
+
+
 async def upsert_medicine_index(db: Session, pharmacy_id: int) -> int:
     """
     Rebuild the medicine index for a pharmacy: documents + chunks + embeddings.
@@ -219,18 +284,7 @@ async def upsert_medicine_index(db: Session, pharmacy_id: int) -> int:
         db.add(doc)
         db.flush()
 
-        rx = "Prescription required" if medicine.prescription_required else "OTC"
-        content = "\n".join(
-            [
-                title,
-                f"Category: {medicine.category or '-'}",
-                f"Price: {medicine.price}",
-                f"Stock: {medicine.stock_level}",
-                f"Rx: {rx}",
-                f"Dosage: {medicine.dosage or '-'}",
-                f"Side effects: {medicine.side_effects or '-'}",
-            ]
-        )
+        content = _medicine_text(medicine)
         chunks = _chunk_text(content)
         for idx, chunk in enumerate(chunks):
             row = models.DocumentChunk(
@@ -540,6 +594,7 @@ def _min_score_for_message(message: str) -> float:
 
 async def answer(db: Session, pharmacy_id: int, customer_id: str, message: str) -> tuple[str, float, bool, list[RetrievedChunk]]:
     top_k = int(os.getenv("RAG_TOP_K", "6"))
+    inventory_top_k = int(os.getenv("RAG_INVENTORY_TOP_K", "4"))
     # Expand retrieval for follow-up queries like "what is the price?" by including the last customer question.
     retrieval_query = message
     recent_questions: list[str] = []
@@ -561,7 +616,18 @@ async def answer(db: Session, pharmacy_id: int, customer_id: str, message: str) 
     if is_greeting:
         retrieval_query = f"{message}\nRelated context: greeting pharmacy assistant"
 
-    chunks = await retrieve(db, pharmacy_id, retrieval_query, top_k=top_k)
+    inventory_chunks = _retrieve_inventory(db, pharmacy_id, retrieval_query, top_k=inventory_top_k)
+    chunks = inventory_chunks + await retrieve(db, pharmacy_id, retrieval_query, top_k=top_k)
+    if chunks:
+        seen = set()
+        deduped: list[RetrievedChunk] = []
+        for chunk in chunks:
+            key = (chunk.document_id, chunk.id, chunk.content)
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(chunk)
+        chunks = deduped
 
     top_score = max((c.score for c in chunks), default=0.0)
     min_score = _min_score_for_message(message)

@@ -72,6 +72,17 @@ def ensure_sqlite_schema(db_engine: Engine) -> None:
             add_column_if_missing("pharmacies", "branding_details", "branding_details TEXT")
             add_column_if_missing("pharmacies", "operating_hours", "operating_hours VARCHAR")
             add_column_if_missing("pharmacies", "support_cod", "support_cod INTEGER NOT NULL DEFAULT 1")
+            add_column_if_missing("pharmacies", "logo_url", "logo_url VARCHAR")
+            add_column_if_missing("pharmacies", "hero_image_url", "hero_image_url VARCHAR")
+            add_column_if_missing("pharmacies", "primary_color", "primary_color VARCHAR")
+            add_column_if_missing("pharmacies", "primary_color_600", "primary_color_600 VARCHAR")
+            add_column_if_missing("pharmacies", "accent_color", "accent_color VARCHAR")
+            add_column_if_missing("pharmacies", "font_family", "font_family VARCHAR")
+            add_column_if_missing("pharmacies", "theme_preset", "theme_preset VARCHAR")
+            add_column_if_missing("pharmacies", "storefront_layout", "storefront_layout VARCHAR")
+            add_column_if_missing("pharmacies", "contact_email", "contact_email VARCHAR")
+            add_column_if_missing("pharmacies", "contact_phone", "contact_phone VARCHAR")
+            add_column_if_missing("pharmacies", "contact_address", "contact_address TEXT")
             add_column_if_missing("pharmacies", "domain", "domain VARCHAR")
             add_column_if_missing("pharmacies", "is_active", "is_active INTEGER NOT NULL DEFAULT 1")
 
@@ -85,6 +96,7 @@ def ensure_sqlite_schema(db_engine: Engine) -> None:
         if "medicines" in tables:
             add_column_if_missing("medicines", "category", "category VARCHAR")
             add_column_if_missing("medicines", "stock_level", "stock_level INTEGER NOT NULL DEFAULT 0")
+            add_column_if_missing("medicines", "expiry_date", "expiry_date DATE")
             add_column_if_missing(
                 "medicines",
                 "prescription_required",
@@ -108,6 +120,8 @@ def ensure_sqlite_schema(db_engine: Engine) -> None:
         if "prescriptions" in tables:
             add_column_if_missing("prescriptions", "original_filename", "original_filename VARCHAR")
             add_column_if_missing("prescriptions", "content_type", "content_type VARCHAR")
+            add_column_if_missing("prescriptions", "draft_token", "draft_token VARCHAR")
+            add_column_if_missing("prescriptions", "pharmacy_id", "pharmacy_id INTEGER")
 
         if "appointments" in tables:
             add_column_if_missing("appointments", "customer_name", "customer_name VARCHAR")

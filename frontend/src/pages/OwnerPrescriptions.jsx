@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import api from "../api/axios";
+import PageHeader from "../components/ui/PageHeader";
 
 const formatDate = (value) => {
   if (!value) return "";
@@ -51,46 +52,64 @@ export default function OwnerPrescriptions() {
 
   return (
     <div className="container">
-      <div className="section-header">
-        <div>
-          <h1 className="page-title">Prescriptions</h1>
-          <p className="page-subtitle">Review uploaded prescriptions and approve or reject them.</p>
-        </div>
-        <button type="button" className="btn btn-ghost" onClick={loadPrescriptions} disabled={isLoading}>
-          {isLoading ? "Refreshing..." : "Refresh"}
-        </button>
-      </div>
+      <PageHeader
+        title="Prescriptions"
+        subtitle="Review uploaded prescriptions and approve or reject them."
+        actions={
+          <button type="button" className="btn btn-ghost" onClick={loadPrescriptions} disabled={isLoading}>
+            {isLoading ? "Refreshing..." : "Refresh"}
+          </button>
+        }
+      />
 
-      {error ? <div className="alert alert-danger" style={{ marginTop: "1rem" }}>{error}</div> : null}
-      {actionError ? <div className="alert alert-danger" style={{ marginTop: "1rem" }}>{actionError}</div> : null}
+      {error ? (
+        <div className="alert alert-danger mt-4" role="alert">
+          {error}
+        </div>
+      ) : null}
+      {actionError ? (
+        <div className="alert alert-danger mt-2" role="alert">
+          {actionError}
+        </div>
+      ) : null}
 
       {prescriptions.length === 0 && !isLoading ? (
-        <div className="card reveal" style={{ marginTop: "1rem" }}>
+        <div className="card reveal mt-4">
           <p className="help">No prescriptions uploaded yet.</p>
         </div>
       ) : (
-        <div className="stack" style={{ marginTop: "1rem" }}>
+        <div className="stack mt-4">
           {prescriptions.map((item) => (
             <section key={item.id} className="card reveal">
               <header className="card-header">
                 <div>
                   <h2 className="card-title">Prescription #{item.id}</h2>
-                  <p className="card-description">Order #{item.order_id} · {formatDate(item.upload_date)}</p>
+                  <p className="card-description">Order #{item.order_id} • {formatDate(item.upload_date)}</p>
                 </div>
                 <span className={statusTone(item.status)}>{item.status}</span>
               </header>
 
               <div className="grid" style={{ gap: "0.6rem" }}>
-                <div className="inline" style={{ flexWrap: "wrap" }}>
+                <div className="inline wrap">
                   <span className="badge">File: {item.original_filename ?? "Upload"}</span>
                   <span className="badge">Type: {item.content_type ?? "unknown"}</span>
                 </div>
 
-                <div className="actions" style={{ justifyContent: "flex-start" }}>
-                  <button type="button" className="btn btn-primary" onClick={() => review(item.id, "APPROVED")} disabled={item.status === "APPROVED"}>
+                <div className="actions justify-start">
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={() => review(item.id, "APPROVED")}
+                    disabled={item.status === "APPROVED"}
+                  >
                     Approve
                   </button>
-                  <button type="button" className="btn btn-danger" onClick={() => review(item.id, "REJECTED")} disabled={item.status === "REJECTED"}>
+                  <button
+                    type="button"
+                    className="btn btn-danger"
+                    onClick={() => review(item.id, "REJECTED")}
+                    disabled={item.status === "REJECTED"}
+                  >
                     Reject
                   </button>
                 </div>

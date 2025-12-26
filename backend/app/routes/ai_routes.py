@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app import models, schemas
 from app.ai.provider_factory import get_ai_provider
 from app.ai import rag_service
-from app.auth.deps import require_admin, require_owner
+from app.auth.deps import require_admin, require_approved_owner
 from app.db import get_db
 from app.deps import get_active_public_pharmacy_id
 
@@ -115,7 +115,7 @@ def my_chat_history(
 
 @router.post("/rag/reindex")
 async def reindex_pharmacy(
-    current_user: models.User = Depends(require_owner),
+    current_user: models.User = Depends(require_approved_owner),
     db: Session = Depends(get_db),
 ):
     try:
@@ -137,7 +137,7 @@ async def reindex_pharmacy(
 
 @router.get("/escalations/owner", response_model=list[schemas.AIInteraction])
 def list_owner_escalations(
-    current_user: models.User = Depends(require_owner),
+    current_user: models.User = Depends(require_approved_owner),
     db: Session = Depends(get_db),
 ):
     return (
@@ -156,7 +156,7 @@ def list_owner_escalations(
 def reply_to_escalation(
     interaction_id: int,
     payload: schemas.AIEscalationReplyIn,
-    current_user: models.User = Depends(require_owner),
+    current_user: models.User = Depends(require_approved_owner),
     db: Session = Depends(get_db),
 ):
     reply = (payload.reply or "").strip()

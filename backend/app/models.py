@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
 from datetime import datetime
 
@@ -17,6 +17,19 @@ class Pharmacy(Base):
     branding_details = Column(Text, nullable=True)
     operating_hours = Column(String, nullable=True)
     support_cod = Column(Boolean, default=True, nullable=False)
+
+    # Theme / branding tokens (per-tenant UI customization)
+    logo_url = Column(String, nullable=True)
+    hero_image_url = Column(String, nullable=True)
+    primary_color = Column(String, nullable=True)  # hex, e.g. #7CB342
+    primary_color_600 = Column(String, nullable=True)  # hex, e.g. #689F38
+    accent_color = Column(String, nullable=True)  # hex, e.g. #3b82f6
+    font_family = Column(String, nullable=True)
+    theme_preset = Column(String, nullable=True)
+    storefront_layout = Column(String, nullable=True)
+    contact_email = Column(String, nullable=True)
+    contact_phone = Column(String, nullable=True)
+    contact_address = Column(Text, nullable=True)
 
     # Implementation-specific fields
     domain = Column(String, unique=True, index=True, nullable=True)  # for future subdomains
@@ -72,6 +85,7 @@ class Medicine(Base):
     category = Column(String, index=True, nullable=True)
     price = Column(Float, nullable=False)
     stock_level = Column(Integer, nullable=False, default=0)
+    expiry_date = Column(Date, nullable=True)
     prescription_required = Column(Boolean, default=False, nullable=False)
     dosage = Column(String, nullable=True)
     side_effects = Column(Text, nullable=True)
@@ -81,6 +95,21 @@ class Medicine(Base):
 
     order_items = relationship("OrderItem", back_populates="medicine")
     prescription_medicines = relationship("PrescriptionMedicine", back_populates="medicine")
+
+
+class Product(Base):
+    __tablename__ = "products"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, index=True, nullable=False)
+    category = Column(String, index=True, nullable=True)
+    price = Column(Float, nullable=False)
+    stock_level = Column(Integer, nullable=False, default=0)
+    description = Column(Text, nullable=True)
+    image_url = Column(String, nullable=True)
+
+    pharmacy_id = Column(Integer, ForeignKey("pharmacies.id"), nullable=False)
+    pharmacy = relationship("Pharmacy")
 
 
 class Order(Base):
@@ -115,8 +144,11 @@ class OrderItem(Base):
     order_id = Column(Integer, ForeignKey("orders.id"), nullable=False)
     order = relationship("Order", back_populates="items")
 
-    medicine_id = Column(Integer, ForeignKey("medicines.id"), nullable=False)
+    medicine_id = Column(Integer, ForeignKey("medicines.id"), nullable=True)
     medicine = relationship("Medicine", back_populates="order_items")
+
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=True)
+    product = relationship("Product")
 
 
 class Prescription(Base):
@@ -129,7 +161,13 @@ class Prescription(Base):
     status = Column(String, nullable=False, default="PENDING")
     upload_date = Column(DateTime, default=datetime.utcnow, nullable=False)
 
-    order_id = Column(Integer, ForeignKey("orders.id"), nullable=False)
+    # Draft prescriptions are uploaded before the order is created and then attached later.
+    draft_token = Column(String, unique=True, index=True, nullable=True)
+
+    pharmacy_id = Column(Integer, ForeignKey("pharmacies.id"), nullable=False)
+    pharmacy = relationship("Pharmacy")
+
+    order_id = Column(Integer, ForeignKey("orders.id"), nullable=True)
     order = relationship("Order", back_populates="prescriptions")
 
     reviewer_id = Column(Integer, ForeignKey("users.id"), nullable=True)

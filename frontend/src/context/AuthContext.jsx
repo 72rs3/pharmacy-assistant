@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import api from "../api/axios";
 
@@ -66,7 +67,7 @@ export function AuthProvider({ children }) {
       user,
       isLoadingUser,
       isAdmin: Boolean(user?.is_admin),
-      isOwner: Boolean(user?.pharmacy_id) && !Boolean(user?.is_admin),
+      isOwner: Boolean(user?.pharmacy_id) && !user?.is_admin,
       login,
       logout,
     }),
