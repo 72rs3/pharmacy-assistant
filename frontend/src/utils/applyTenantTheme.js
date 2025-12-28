@@ -17,6 +17,18 @@ const THEME_PRESETS = {
     accent_color: "#334155",
     font_family: '"Space Grotesk", "Segoe UI", system-ui, sans-serif',
   },
+  glass: {
+    primary_color: "#0F766E",
+    primary_color_600: "#0B5D55",
+    accent_color: "#0EA5E9",
+    font_family: '"Plus Jakarta Sans", "Segoe UI", system-ui, sans-serif',
+  },
+  neumorph: {
+    primary_color: "#475569",
+    primary_color_600: "#334155",
+    accent_color: "#64748B",
+    font_family: '"Sora", "Segoe UI", system-ui, sans-serif',
+  },
 };
 
 export function applyTenantTheme(pharmacy) {

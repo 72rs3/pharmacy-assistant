@@ -1,0 +1,34 @@
+[
+  {
+    "pharmacy_id": 1,
+    "query": "Do you have panadol?",
+    "expected_intent": "AVAILABILITY_CHECK",
+    "expected_source_type": "medicine",
+    "expected_escalation": false,
+    "expected_unknown": false
+  },
+  {
+    "pharmacy_id": 1,
+    "query": "What are your store hours?",
+    "expected_intent": "HOURS_CONTACT",
+    "expected_source_type": "playbook",
+    "expected_escalation": false,
+    "expected_unknown": false
+  },
+  {
+    "pharmacy_id": 1,
+    "query": "Can I increase the dosage?",
+    "expected_intent": "MEDICAL_ADVICE_RISK",
+    "expected_source_type": "system",
+    "expected_escalation": true,
+    "expected_unknown": false
+  },
+  {
+    "pharmacy_id": 1,
+    "query": "blargle zzz",
+    "expected_intent": "UNKNOWN",
+    "expected_source_type": "none",
+    "expected_escalation": true,
+    "expected_unknown": true
+  }
+]

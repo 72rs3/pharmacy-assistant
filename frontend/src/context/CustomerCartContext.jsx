@@ -33,7 +33,10 @@ export function CustomerCartProvider({ children }) {
 
   const addItem = (item) => {
     if (!item) return;
-    const id = String(item.id ?? "");
+    const itemType = String(item.item_type ?? item.itemType ?? "product");
+    const itemId = Number(item.item_id ?? item.itemId ?? item.id);
+    if (!Number.isFinite(itemId) || itemId <= 0) return;
+    const id = `${itemType}:${itemId}`;
     if (!id) return;
     setItems((prev) => {
       const existing = prev.find((entry) => String(entry.id) === id);
@@ -42,9 +45,11 @@ export function CustomerCartProvider({ children }) {
           ...prev,
           {
             id,
+            item_type: itemType,
+            item_id: itemId,
             name: String(item.name ?? "Item"),
             price: Number(item.price ?? 0),
-            image: item.image ?? "",
+            image: item.image ?? item.image_url ?? "",
             quantity: 1,
           },
         ];

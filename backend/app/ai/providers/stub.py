@@ -45,7 +45,19 @@ class StubProvider(AIProvider):
         payload = {
             "answer": answer,
             "citations": (
-                [{"doc_id": doc_id, "chunk_id": chunk_id, "snippet": snippet}] if (doc_id and chunk_id and snippet) else []
+                [
+                    {
+                        "source_type": "document",
+                        "title": "source",
+                        "doc_id": doc_id,
+                        "chunk_id": chunk_id,
+                        "preview": snippet,
+                        "last_updated_at": None,
+                        "score": None,
+                    }
+                ]
+                if (doc_id and chunk_id and snippet)
+                else []
             ),
         }
         return json.dumps(payload, ensure_ascii=False)

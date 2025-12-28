@@ -2,9 +2,12 @@ import { useState } from "react";
 import { Clock, Mail, MapPin, Phone } from "lucide-react";
 import { useCustomerUi } from "../utils/customer-ui";
 import { useTenant } from "../context/TenantContext";
+import { isValidE164, isValidEmail } from "../utils/validation";
+import PhoneInput from "../components/ui/PhoneInput";
 
 export default function Contact() {
   const { pharmacy } = useTenant() ?? {};
+  const theme = String(pharmacy?.theme_preset ?? "classic").toLowerCase();
   const { openChat } = useCustomerUi();
   const contactAddress =
     pharmacy?.contact_address ??
@@ -14,6 +17,7 @@ export default function Contact() {
   const contactEmail =
     pharmacy?.contact_email ?? "info@sunrpharmacy.com\nsupport@sunrpharmacy.com\nprescriptions@sunrpharmacy.com";
   const mapAddress = contactAddress.split("\n")[0] || "123 Health Avenue";
+  const [formErrors, setFormErrors] = useState({ email: "", phone: "" });
   const [formData, setFormData] = useState({
     name: "",
     email: "",
@@ -24,19 +28,49 @@ export default function Contact() {
 
   const handleSubmit = (event) => {
     event.preventDefault();
+    const nextErrors = { email: "", phone: "" };
+    if (!isValidEmail(formData.email)) {
+      nextErrors.email = "Enter a valid email address.";
+    }
+    if (formData.phone.trim() && !isValidE164(formData.phone)) {
+      nextErrors.phone = "Use E.164 format, e.g. +15551234567.";
+    }
+    if (nextErrors.email || nextErrors.phone) {
+      setFormErrors(nextErrors);
+      return;
+    }
+    setFormErrors({ email: "", phone: "" });
     alert("Thank you for your message! We'll get back to you soon.");
     setFormData({ name: "", email: "", phone: "", subject: "", message: "" });
   };
 
   const handleChange = (event) => {
+    const { name, value } = event.target;
     setFormData((prev) => ({
       ...prev,
-      [event.target.name]: event.target.value,
+      [name]: value,
     }));
+    if (event.target.name === "email" || event.target.name === "phone") {
+      setFormErrors((prev) => ({ ...prev, [event.target.name]: "" }));
+    }
   };
 
+  const isGlass = theme === "glass";
+  const isNeumorph = theme === "neumorph";
+  const isMinimal = theme === "minimal";
+  const isFresh = theme === "fresh";
+  const cardBase = isGlass
+    ? "bg-white/70 backdrop-blur border border-white/60 shadow-lg"
+    : isNeumorph
+      ? "bg-slate-100 border border-slate-200 shadow-[inset_-10px_-10px_20px_rgba(255,255,255,0.85),inset_10px_10px_20px_rgba(15,23,42,0.12)]"
+      : isFresh
+        ? "bg-white/95 border border-emerald-100 shadow-[0_16px_30px_rgba(16,185,129,0.12)]"
+        : "bg-white shadow-md border border-slate-100";
+  const pageGap = isMinimal ? "space-y-16" : "space-y-12";
+  const contactGrid = isMinimal ? "grid md:grid-cols-2 gap-6" : "grid md:grid-cols-4 gap-6";
+
   return (
-    <div className="space-y-12">
+    <div className={pageGap}>
       <section className="text-center space-y-4">
         <h1 className="text-5xl text-gray-900">Contact Us</h1>
         <p className="text-xl text-gray-600 max-w-3xl mx-auto">
@@ -44,33 +78,33 @@ export default function Contact() {
         </p>
       </section>
 
-      <section className="grid md:grid-cols-4 gap-6">
-        <div className="bg-white p-6 rounded-xl shadow-md text-center">
-          <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
+      <section className={contactGrid}>
+        <div className={`${cardBase} p-6 rounded-2xl text-center`}>
+          <div className={`w-12 h-12 ${isNeumorph ? "bg-slate-100" : "bg-blue-100"} rounded-full flex items-center justify-center mx-auto mb-4`}>
             <MapPin className="w-6 h-6 text-blue-600" />
           </div>
           <h3 className="text-gray-900 mb-2">Address</h3>
           <p className="text-gray-600 text-sm whitespace-pre-line">{contactAddress}</p>
         </div>
 
-        <div className="bg-white p-6 rounded-xl shadow-md text-center">
-          <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+        <div className={`${cardBase} p-6 rounded-2xl text-center`}>
+          <div className={`w-12 h-12 ${isNeumorph ? "bg-slate-100" : "bg-green-100"} rounded-full flex items-center justify-center mx-auto mb-4`}>
             <Phone className="w-6 h-6 text-green-600" />
           </div>
           <h3 className="text-gray-900 mb-2">Phone</h3>
           <p className="text-gray-600 text-sm whitespace-pre-line">{contactPhone}</p>
         </div>
 
-        <div className="bg-white p-6 rounded-xl shadow-md text-center">
-          <div className="w-12 h-12 bg-purple-100 rounded-full flex items-center justify-center mx-auto mb-4">
+        <div className={`${cardBase} p-6 rounded-2xl text-center`}>
+          <div className={`w-12 h-12 ${isNeumorph ? "bg-slate-100" : "bg-purple-100"} rounded-full flex items-center justify-center mx-auto mb-4`}>
             <Mail className="w-6 h-6 text-purple-600" />
           </div>
           <h3 className="text-gray-900 mb-2">Email</h3>
           <p className="text-gray-600 text-sm whitespace-pre-line">{contactEmail}</p>
         </div>
 
-        <div className="bg-white p-6 rounded-xl shadow-md text-center">
-          <div className="w-12 h-12 bg-orange-100 rounded-full flex items-center justify-center mx-auto mb-4">
+        <div className={`${cardBase} p-6 rounded-2xl text-center`}>
+          <div className={`w-12 h-12 ${isNeumorph ? "bg-slate-100" : "bg-orange-100"} rounded-full flex items-center justify-center mx-auto mb-4`}>
             <Clock className="w-6 h-6 text-orange-600" />
           </div>
           <h3 className="text-gray-900 mb-2">Hours</h3>
@@ -85,7 +119,7 @@ export default function Contact() {
       </section>
 
       <section className="grid md:grid-cols-2 gap-8">
-        <div className="bg-white rounded-2xl p-8 shadow-md">
+        <div className={`${cardBase} rounded-2xl p-8`}>
           <h2 className="text-3xl text-gray-900 mb-6">Send us a Message</h2>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
@@ -118,21 +152,21 @@ export default function Contact() {
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--brand-primary)]"
                 placeholder="john@example.com"
               />
+              {formErrors.email ? <div className="text-xs text-red-600 mt-1">{formErrors.email}</div> : null}
             </div>
 
             <div>
               <label htmlFor="phone" className="block text-sm text-gray-700 mb-2">
                 Phone Number
               </label>
-              <input
-                type="tel"
+              <PhoneInput
                 id="phone"
                 name="phone"
                 value={formData.phone}
-                onChange={handleChange}
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--brand-primary)]"
-                placeholder="(555) 123-4567"
+                onChange={(next) => handleChange({ target: { name: "phone", value: next } })}
+                placeholder="Enter phone number"
               />
+              {formErrors.phone ? <div className="text-xs text-red-600 mt-1">{formErrors.phone}</div> : null}
             </div>
 
             <div>
@@ -182,7 +216,7 @@ export default function Contact() {
         </div>
 
         <div className="space-y-6">
-          <div className="bg-gray-200 rounded-2xl h-96 flex items-center justify-center shadow-md">
+          <div className={`${isNeumorph ? "bg-slate-100" : "bg-gray-200"} rounded-2xl h-96 flex items-center justify-center shadow-md`}>
             <div className="text-center text-gray-600">
               <MapPin className="w-16 h-16 mx-auto mb-4 text-gray-400" />
               <p>Interactive map would be displayed here</p>
@@ -190,7 +224,7 @@ export default function Contact() {
             </div>
           </div>
 
-          <div className="bg-gradient-to-br from-[var(--brand-primary)] to-[var(--brand-primary-600)] rounded-2xl p-8 text-white">
+          <div className="bg-gradient-to-br from-[var(--brand-primary)] to-[var(--brand-primary-600)] rounded-2xl p-8 text-white shadow-lg">
             <h3 className="text-2xl mb-4">Need Immediate Assistance?</h3>
             <p className="mb-6 opacity-90">
               Our AI assistant is available 24/7 to answer your questions and help you find what you need.
@@ -206,7 +240,7 @@ export default function Contact() {
         </div>
       </section>
 
-      <section className="bg-white rounded-2xl p-8 shadow-md">
+      <section className={`${cardBase} rounded-2xl p-8`}>
         <h2 className="text-3xl text-gray-900 mb-8 text-center">Frequently Asked Questions</h2>
         <div className="grid md:grid-cols-2 gap-6">
           <div className="space-y-3">

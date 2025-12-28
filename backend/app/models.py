@@ -30,6 +30,7 @@ class Pharmacy(Base):
     contact_email = Column(String, nullable=True)
     contact_phone = Column(String, nullable=True)
     contact_address = Column(Text, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     # Implementation-specific fields
     domain = Column(String, unique=True, index=True, nullable=True)  # for future subdomains
@@ -89,6 +90,7 @@ class Medicine(Base):
     prescription_required = Column(Boolean, default=False, nullable=False)
     dosage = Column(String, nullable=True)
     side_effects = Column(Text, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     pharmacy_id = Column(Integer, ForeignKey("pharmacies.id"), nullable=False)
     pharmacy = relationship("Pharmacy", back_populates="medicines")
@@ -107,6 +109,7 @@ class Product(Base):
     stock_level = Column(Integer, nullable=False, default=0)
     description = Column(Text, nullable=True)
     image_url = Column(String, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     pharmacy_id = Column(Integer, ForeignKey("pharmacies.id"), nullable=False)
     pharmacy = relationship("Pharmacy")
@@ -202,6 +205,7 @@ class Appointment(Base):
     scheduled_time = Column(DateTime, nullable=False)
     status = Column(String, nullable=False, default="PENDING")
     vaccine_name = Column(String, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     pharmacy_id = Column(Integer, ForeignKey("pharmacies.id"), nullable=False)
     pharmacy = relationship("Pharmacy", back_populates="appointments")
@@ -242,6 +246,17 @@ class AILog(Base):
     pharmacy = relationship("Pharmacy", back_populates="ai_logs")
 
 
+class ChatSession(Base):
+    __tablename__ = "chat_sessions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    pharmacy_id = Column(Integer, ForeignKey("pharmacies.id"), nullable=False, index=True)
+    session_id = Column(String, nullable=False, index=True)
+    turns_json = Column(Text, nullable=False, default="[]")
+    expires_at = Column(DateTime, nullable=False, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class Document(Base):
     __tablename__ = "documents"
 
@@ -250,6 +265,10 @@ class Document(Base):
     source_type = Column(String, nullable=False)  # medicine / pharmacy / faq / upload
     source_key = Column(String, nullable=True)  # e.g. medicine:{id}
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    data_updated_at = Column(DateTime, nullable=True)
+    indexed_at = Column(DateTime, nullable=True)
+    version = Column(Integer, default=1, nullable=False)
 
     pharmacy_id = Column(Integer, ForeignKey("pharmacies.id"), nullable=False, index=True)
 
@@ -266,6 +285,9 @@ class DocumentChunk(Base):
     # Default matches `text-embedding-3-small` output dimension.
     embedding = Column(Embedding(1536), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    indexed_at = Column(DateTime, nullable=True)
+    version = Column(Integer, default=1, nullable=False)
 
     pharmacy_id = Column(Integer, ForeignKey("pharmacies.id"), nullable=False, index=True)
 

@@ -42,6 +42,7 @@ export default function Home() {
 
   const { pharmacy } = useTenant() ?? {};
   const brandName = pharmacy?.name ?? "Sunr";
+  const theme = String(pharmacy?.theme_preset ?? "classic").toLowerCase();
   const layout = String(pharmacy?.storefront_layout ?? "classic").toLowerCase();
   const heroImage =
     pharmacy?.hero_image_url ||
@@ -65,6 +66,15 @@ export default function Home() {
       </div>
     );
   }
+
+  const isGlass = theme === "glass";
+  const isNeumorph = theme === "neumorph";
+  const isMinimal = theme === "minimal";
+  const featureCardClass = isGlass
+    ? "bg-white/70 backdrop-blur border border-white/70 shadow-lg"
+    : isNeumorph
+      ? "bg-slate-100 border border-slate-200 shadow-[inset_-12px_-12px_24px_rgba(255,255,255,0.85),inset_12px_12px_24px_rgba(15,23,42,0.12)]"
+      : "bg-white shadow-md";
 
   const renderClassicHero = () => (
     <section className="relative bg-gradient-to-br from-amber-50 to-sky-50 rounded-3xl overflow-hidden shadow-sm border border-white">
@@ -235,7 +245,99 @@ export default function Home() {
     </section>
   );
 
+  const renderGlassHero = () => (
+    <section className="relative rounded-[32px] overflow-hidden border border-white/60 bg-white/70 backdrop-blur shadow-xl">
+      <div className="grid lg:grid-cols-[1.1fr_0.9fr] gap-10 items-center p-8 md:p-16">
+        <div className="space-y-6">
+          <span className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/70 text-slate-700 text-sm border border-white/80">
+            Premium pharmacy experience
+          </span>
+          <h1 className="text-5xl md:text-6xl text-slate-900">
+            {brandName}
+            <br />
+            <span className="text-[var(--brand-accent)]">Glass clinic</span>
+          </h1>
+          <p className="text-lg text-slate-600">
+            A serene, modern storefront with transparent touches and smooth interactions.
+          </p>
+          <div className="flex flex-wrap gap-4">
+            <Link
+              to="/shop"
+              className="px-6 py-3 bg-[var(--brand-accent)] text-white rounded-full hover:opacity-95 transition-colors shadow-lg"
+            >
+              Explore products
+            </Link>
+            <Link
+              to="/contact"
+              className="px-6 py-3 border border-white/80 text-slate-700 rounded-full hover:bg-white/80 transition-colors"
+            >
+              Get in touch
+            </Link>
+          </div>
+          <div className="grid sm:grid-cols-2 gap-4">
+            <div className="rounded-2xl border border-white/80 bg-white/70 p-4">
+              <div className="text-sm text-slate-600">Live assistance</div>
+              <div className="text-lg text-slate-900">Chat with a pharmacist</div>
+            </div>
+            <div className="rounded-2xl border border-white/80 bg-white/70 p-4">
+              <div className="text-sm text-slate-600">Delivery</div>
+              <div className="text-lg text-slate-900">Fast local dispatch</div>
+            </div>
+          </div>
+        </div>
+        <div className="relative">
+          <div className="absolute -top-6 -right-6 w-32 h-32 bg-sky-200/40 rounded-full blur-2xl" />
+          <img src={heroImage} alt="Pharmacy hero" className="w-full h-[420px] object-cover rounded-3xl shadow-2xl" />
+        </div>
+      </div>
+    </section>
+  );
+
+  const renderNeumorphHero = () => (
+    <section className="relative rounded-[32px] overflow-hidden bg-slate-100 border border-slate-200 shadow-[20px_20px_40px_rgba(15,23,42,0.12),-20px_-20px_40px_rgba(255,255,255,0.8)]">
+      <div className="grid lg:grid-cols-[0.95fr_1.05fr] gap-10 items-center p-8 md:p-16">
+        <div className="space-y-6">
+          <div className="inline-flex items-center px-4 py-2 rounded-2xl bg-slate-100 shadow-[inset_-6px_-6px_12px_rgba(255,255,255,0.8),inset_6px_6px_12px_rgba(15,23,42,0.12)] text-slate-700 text-sm">
+            Soft-touch care
+          </div>
+          <h1 className="text-5xl md:text-6xl text-slate-900">
+            {brandName}
+            <br />
+            <span className="text-[var(--brand-accent)]">Neumorph Studio</span>
+          </h1>
+          <p className="text-lg text-slate-600">
+            Smooth, tactile UI components with gentle depth and comfort-first navigation.
+          </p>
+          <div className="flex flex-wrap gap-4">
+            <Link
+              to="/appointments"
+              className="px-6 py-3 bg-[var(--brand-accent)] text-white rounded-2xl hover:opacity-95 transition-colors shadow-[0_14px_30px_rgba(15,23,42,0.18)]"
+            >
+              Book appointment
+            </Link>
+            <Link
+              to="/shop"
+              className="px-6 py-3 bg-slate-100 text-slate-700 rounded-2xl shadow-[inset_-6px_-6px_12px_rgba(255,255,255,0.85),inset_6px_6px_12px_rgba(15,23,42,0.12)]"
+            >
+              Browse shop
+            </Link>
+          </div>
+        </div>
+        <div className="grid gap-4">
+          <div className="rounded-3xl overflow-hidden shadow-[12px_12px_24px_rgba(15,23,42,0.15)]">
+            <img src={heroImage} alt="Pharmacy hero" className="w-full h-56 object-cover" />
+          </div>
+          <div className="rounded-3xl overflow-hidden shadow-[12px_12px_24px_rgba(15,23,42,0.15)]">
+            <img src={secondaryImage} alt="Pharmacy interior" className="w-full h-56 object-cover" />
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+
   const renderHero = () => {
+    if (isGlass) return renderGlassHero();
+    if (isNeumorph) return renderNeumorphHero();
     if (layout === "breeze") return renderBreezeHero();
     if (layout === "studio") return renderStudioHero();
     if (layout === "market") return renderMarketHero();
@@ -246,14 +348,14 @@ export default function Home() {
     <div className="space-y-16">
       {renderHero()}
 
-      <section className="grid md:grid-cols-4 gap-6">
+      <section className={`grid gap-6 ${isMinimal ? "md:grid-cols-2 lg:grid-cols-4" : "md:grid-cols-4"}`}>
         {features.map((feature) => {
           const Icon = feature.icon;
           const tone = toneStyles[feature.tone] ?? "bg-gray-100 text-gray-600";
           return (
             <div
               key={feature.title}
-              className="bg-white p-6 rounded-xl shadow-md hover:shadow-xl transition-shadow"
+              className={`${featureCardClass} p-6 rounded-2xl hover:shadow-xl transition-shadow`}
             >
               <div className={`w-12 h-12 ${tone} rounded-lg flex items-center justify-center mb-4`}>
                 <Icon className="w-6 h-6" />

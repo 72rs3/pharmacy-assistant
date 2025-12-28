@@ -252,6 +252,16 @@ class CustomerOrderCreate(BaseModel):
     draft_prescription_tokens: list[str] | None = None
 
 
+class CustomerRxOrderCreate(BaseModel):
+    customer_name: str
+    customer_phone: str
+    customer_address: str
+    customer_notes: str | None = None
+    medicine_id: int
+    quantity: int = 1
+    draft_prescription_tokens: list[str]
+
+
 class CustomerOrderCreated(BaseModel):
     order_id: int
     tracking_code: str
@@ -352,6 +362,8 @@ class AppointmentStatusIn(BaseModel):
 
 class AppointmentBase(BaseModel):
     customer_id: str
+    customer_name: str | None = None
+    customer_phone: str | None = None
     type: str
     scheduled_time: datetime
     status: str = "PENDING"
@@ -379,6 +391,8 @@ class CustomerAppointmentCreate(BaseModel):
 
 class CustomerAppointmentOut(BaseModel):
     id: int
+    customer_name: str | None = None
+    customer_phone: str | None = None
     type: str
     scheduled_time: datetime
     status: str
@@ -389,6 +403,11 @@ class CustomerAppointmentOut(BaseModel):
 
 class CustomerAppointmentCreated(CustomerAppointmentOut):
     tracking_code: str
+
+
+class AppointmentUpdateIn(BaseModel):
+    status: str | None = None  # PENDING / CONFIRMED / CANCELLED / COMPLETED
+    scheduled_time: datetime | None = None
 
 
 # --------------------
@@ -442,22 +461,53 @@ class AILog(AILogBase):
 
 class AIChatIn(BaseModel):
     message: str
+    session_id: str | None = None
 
 
 class AICitation(BaseModel):
+    source_type: str
+    title: str
     doc_id: int
     chunk_id: int
-    snippet: str
+    preview: str
+    last_updated_at: datetime | None = None
+    score: float | None = None
+
+
+class AIAction(BaseModel):
+    type: str  # add_to_cart | upload_prescription | request_notify
+    label: str | None = None
+    medicine_id: int | None = None
+    payload: dict | None = None
+
+
+class MedicineCard(BaseModel):
+    medicine_id: int
+    name: str
+    dosage: str | None = None
+    category: str | None = None
+    rx: bool
+    price: float | None = None
+    stock: int
+    updated_at: datetime | None = None
+    indexed_at: datetime | None = None
 
 
 class AIChatOut(BaseModel):
     interaction_id: int
     customer_id: str
+    session_id: str
     answer: str
     citations: list[AICitation] = []
+    cards: list[MedicineCard] = []
+    actions: list[AIAction] = []
+    quick_replies: list[str] = []
     confidence_score: float
     escalated_to_human: bool
+    intent: str
     created_at: datetime
+    data_last_updated_at: datetime | None = None
+    indexed_at: datetime | None = None
 
 
 class AIEscalationReplyIn(BaseModel):

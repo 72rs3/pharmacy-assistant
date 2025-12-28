@@ -9,6 +9,8 @@ const formatDate = (value) => {
   return date.toLocaleString();
 };
 
+const formatMoney = (value) => new Intl.NumberFormat(undefined, { style: "currency", currency: "USD" }).format(value);
+
 const statusTone = (status) => {
   const normalized = String(status || "").toUpperCase();
   if (normalized === "APPROVED") return "bg-emerald-100 text-emerald-800";
@@ -127,7 +129,7 @@ export default function CustomerOrders() {
               value={trackingCode}
               onChange={(e) => setTrackingCode(e.target.value)}
               className="flex-1 px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-[var(--brand-primary)]"
-              placeholder="Paste tracking code…"
+              placeholder="Paste tracking code"
             />
             <button
               type="button"
@@ -162,7 +164,7 @@ export default function CustomerOrders() {
 
           <div className="p-6">
             {isLoading ? (
-              <div className="text-gray-600 text-sm">Loading orders…</div>
+              <div className="text-gray-600 text-sm">Loading orders...</div>
             ) : orders.length === 0 ? (
               <EmptyState
                 title="No orders found"
@@ -182,7 +184,7 @@ export default function CustomerOrders() {
                       <span className={`text-xs px-2 py-1 rounded-full ${statusTone(order.status)}`}>{order.status}</span>
                     </div>
                     <div className="mt-1 text-xs text-gray-500">
-                      {formatDate(order.order_date)} • {order.payment_method} • {order.payment_status}
+                      {formatDate(order.order_date)} - {order.payment_method} - {order.payment_status}
                     </div>
                   </button>
                 ))}
@@ -199,7 +201,7 @@ export default function CustomerOrders() {
 
           <div className="p-6">
             {isLoadingDetails ? (
-              <div className="text-gray-600 text-sm">Loading details…</div>
+              <div className="text-gray-600 text-sm">Loading details...</div>
             ) : !selectedOrder ? (
               <div className="text-gray-600 text-sm">No order selected.</div>
             ) : (
@@ -261,4 +263,3 @@ export default function CustomerOrders() {
     </div>
   );
 }
-

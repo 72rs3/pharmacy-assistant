@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import api from "../api/axios";
 import { isPortalHost } from "../utils/tenant";
+import { isValidEmail } from "../utils/validation";
 
 export default function Register() {
   const [fullName, setFullName] = useState("");
@@ -21,6 +22,10 @@ export default function Register() {
   const handleRegister = async (event) => {
     event.preventDefault();
     setError("");
+    if (!isValidEmail(email)) {
+      setError("Enter a valid email address.");
+      return;
+    }
     setIsSubmitting(true);
 
     try {

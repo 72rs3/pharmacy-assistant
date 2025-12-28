@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { CalendarDays, RefreshCw } from "lucide-react";
 import api from "../api/axios";
 import EmptyState from "../components/ui/EmptyState";
+import { isValidE164 } from "../utils/validation";
+import PhoneInput from "../components/ui/PhoneInput";
 
 const APPOINTMENT_TRACKING_CODE_KEY = "customer_appointment_tracking_code";
 
@@ -28,6 +30,7 @@ export default function Appointments() {
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [result, setResult] = useState(null);
+  const [phoneError, setPhoneError] = useState("");
   const [trackingCode, setTrackingCode] = useState(() =>
     typeof window !== "undefined" ? localStorage.getItem(APPOINTMENT_TRACKING_CODE_KEY) ?? "" : ""
   );
@@ -39,6 +42,7 @@ export default function Appointments() {
 
   const canSubmit = useMemo(() => {
     if (!form.customer_name.trim() || !form.customer_phone.trim() || !form.type.trim() || !form.scheduled_time) return false;
+    if (!isValidE164(form.customer_phone)) return false;
     if (shouldShowVaccineName && !form.vaccine_name.trim()) return false;
     return true;
   }, [form, shouldShowVaccineName]);
@@ -46,10 +50,17 @@ export default function Appointments() {
   const handleChange = (event) => {
     const { name, value } = event.target;
     setForm((prev) => ({ ...prev, [name]: value }));
+    if (name === "customer_phone" && phoneError) {
+      setPhoneError("");
+    }
   };
 
   const submitAppointment = async (event) => {
     event.preventDefault();
+    if (!isValidE164(form.customer_phone)) {
+      setPhoneError("Use E.164 format, e.g. +15551234567.");
+      return;
+    }
     if (!canSubmit || isSubmitting) return;
 
     setIsSubmitting(true);
@@ -77,6 +88,7 @@ export default function Appointments() {
         tracking_code: nextTracking,
       });
       setForm((prev) => ({ ...prev, scheduled_time: "", vaccine_name: "" }));
+      setPhoneError("");
     } catch (e) {
       setResult({ error: e?.response?.data?.detail ?? "Unable to create appointment. Please try again." });
     } finally {
@@ -148,15 +160,15 @@ export default function Appointments() {
               <label htmlFor="customer_phone" className="block text-sm text-gray-700 mb-2">
                 Phone number *
               </label>
-              <input
+              <PhoneInput
                 id="customer_phone"
                 name="customer_phone"
                 value={form.customer_phone}
-                onChange={handleChange}
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--brand-primary)]"
-                placeholder="(555) 123-4567"
+                onChange={(next) => handleChange({ target: { name: "customer_phone", value: next } })}
                 required
+                placeholder="Enter phone number"
               />
+              {phoneError ? <div className="text-xs text-red-600 mt-1">{phoneError}</div> : null}
             </div>
 
             <div className="grid md:grid-cols-2 gap-4">
@@ -218,7 +230,7 @@ export default function Appointments() {
               <div className="bg-green-50 border border-green-200 rounded-xl p-4 text-sm text-green-900 space-y-1">
                 <div className="font-semibold">Request submitted</div>
                 <div>
-                  {result.type} • {formatDateTime(result.scheduled_time)} • {result.status}
+                  {result.type} - {formatDateTime(result.scheduled_time)} - {result.status}
                 </div>
                 <div className="break-all">Tracking code: {result.tracking_code}</div>
               </div>
@@ -229,7 +241,7 @@ export default function Appointments() {
               disabled={!canSubmit || isSubmitting}
               className="w-full py-3 bg-[var(--brand-accent)] text-white rounded-lg hover:opacity-95 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
             >
-              {isSubmitting ? "Submitting…" : "Reserve appointment"}
+              {isSubmitting ? "Submitting..." : "Reserve appointment"}
             </button>
           </form>
         </div>
@@ -238,9 +250,7 @@ export default function Appointments() {
           <div className="flex items-start justify-between gap-4">
             <div>
               <h2 className="text-2xl text-gray-900">My appointments</h2>
-              <p className="text-gray-600">
-                Enter your tracking code to view your appointment requests.
-              </p>
+              <p className="text-gray-600">Enter your tracking code to view your appointment requests.</p>
             </div>
             <CalendarDays className="w-8 h-8 text-gray-300" />
           </div>
@@ -289,6 +299,8 @@ export default function Appointments() {
                       <div>
                         <div className="text-gray-900 font-medium">{appt.type}</div>
                         <div className="text-sm text-gray-600">{formatDateTime(appt.scheduled_time)}</div>
+                        {appt.customer_name ? <div className="text-xs text-gray-600 mt-1">Name: {appt.customer_name}</div> : null}
+                        {appt.customer_phone ? <div className="text-xs text-gray-600 mt-1">Phone: {appt.customer_phone}</div> : null}
                         {appt.vaccine_name ? <div className="text-xs text-gray-600 mt-1">Vaccine: {appt.vaccine_name}</div> : null}
                       </div>
                       <div className="text-xs text-gray-700">{appt.status}</div>
@@ -297,7 +309,7 @@ export default function Appointments() {
                 ))}
               </div>
             ) : isLoadingMyAppointments ? (
-              <div className="text-sm text-gray-600">Loading…</div>
+              <div className="text-sm text-gray-600">Loading...</div>
             ) : (
               <EmptyState title="No appointments found" description="No appointment requests found for this tracking code." />
             )
@@ -309,4 +321,3 @@ export default function Appointments() {
     </div>
   );
 }
-

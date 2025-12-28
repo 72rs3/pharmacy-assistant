@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 import api from "../api/axios";
 import { useAuth } from "../context/AuthContext";
 import { RefreshCw } from "lucide-react";
+import { isValidE164, isValidEmail } from "../utils/validation";
+import PhoneInput from "../components/ui/PhoneInput";
 
 export default function PortalSettings() {
   const { user, isAdmin } = useAuth();
@@ -94,6 +96,10 @@ export default function PortalSettings() {
     event.preventDefault();
     setResetError("");
     setResetSuccess("");
+    if (!isValidEmail(resetEmail)) {
+      setResetError("Enter a valid email address.");
+      return;
+    }
     try {
       await api.post("/auth/admin/reset-password", {
         email: resetEmail,
@@ -110,6 +116,14 @@ export default function PortalSettings() {
     event.preventDefault();
     setPharmacyError("");
     setPharmacySuccess("");
+    if (brandingForm.contact_email && !isValidEmail(brandingForm.contact_email)) {
+      setPharmacyError("Contact email must be a valid email address.");
+      return;
+    }
+    if (brandingForm.contact_phone && !isValidE164(brandingForm.contact_phone)) {
+      setPharmacyError("Contact phone must be E.164 format, e.g. +15551234567.");
+      return;
+    }
     try {
       const res = await api.patch("/pharmacies/me", {
         ...brandingForm,
@@ -277,6 +291,8 @@ export default function PortalSettings() {
                         <option value="classic">Classic (clean & familiar)</option>
                         <option value="fresh">Fresh (bright & friendly)</option>
                         <option value="minimal">Minimal (quiet & modern)</option>
+                        <option value="glass">Glass (frosted & premium)</option>
+                        <option value="neumorph">Neumorph (soft depth)</option>
                       </select>
                       <p className="text-xs text-slate-500 mt-2">Presets set default colors and typography. Custom colors override them.</p>
                     </div>
@@ -317,25 +333,26 @@ export default function PortalSettings() {
                         <label className="block text-xs font-medium text-slate-600 mb-1" htmlFor="contactEmail">
                           Contact email
                         </label>
-                        <input
-                          id="contactEmail"
-                          type="email"
-                          value={brandingForm.contact_email}
-                          onChange={(e) => setBrandingForm((prev) => ({ ...prev, contact_email: e.target.value }))}
-                          placeholder="info@pharmacy.com"
-                          className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-4 focus:ring-blue-100 text-sm"
-                        />
+                          <input
+                            id="contactEmail"
+                            type="email"
+                            value={brandingForm.contact_email}
+                            onChange={(e) => setBrandingForm((prev) => ({ ...prev, contact_email: e.target.value }))}
+                            placeholder="info@pharmacy.com"
+                            className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-4 focus:ring-blue-100 text-sm"
+                          />
                       </div>
                       <div>
                         <label className="block text-xs font-medium text-slate-600 mb-1" htmlFor="contactPhone">
                           Contact phone
                         </label>
-                        <input
+                        <PhoneInput
                           id="contactPhone"
+                          name="contactPhone"
                           value={brandingForm.contact_phone}
-                          onChange={(e) => setBrandingForm((prev) => ({ ...prev, contact_phone: e.target.value }))}
-                          placeholder="+1 (555) 123-4567"
-                          className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-4 focus:ring-blue-100 text-sm"
+                          onChange={(next) => setBrandingForm((prev) => ({ ...prev, contact_phone: next }))}
+                          placeholder="Enter phone number"
+                          className="text-sm"
                         />
                       </div>
                     </div>

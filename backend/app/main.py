@@ -17,6 +17,7 @@ from app.routes.order_routes import router as order_router
 from app.routes.prescription_routes import router as prescription_router
 from app.routes.appointment_routes import router as appointment_router
 from app.routes.ai_routes import router as ai_router
+from app.routes.cart_routes import router as cart_router
 
 def _split_csv(value: str | None) -> list[str]:
     if not value:
@@ -112,6 +113,7 @@ app.include_router(order_router)
 app.include_router(prescription_router)
 app.include_router(appointment_router)
 app.include_router(ai_router)
+app.include_router(cart_router)
 
 
 @app.get("/")

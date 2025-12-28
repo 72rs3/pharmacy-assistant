@@ -1,9 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+﻿import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Minimize2, Pill, Send, X } from "lucide-react";
 import api from "../../api/axios";
+import { useCustomerCart } from "../../context/CustomerCartContext";
+import { useTenant } from "../../context/TenantContext";
 
 const CHAT_ID_KEY = "customer_chat_id";
+const SESSION_ID_KEY = "customer_session_id";
 
 const defaultSuggestions = [
   "Check medication availability",
@@ -19,6 +22,9 @@ const shouldOfferPrescriptionUpload = (text) => {
 
 export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr", placement = "viewport" }) {
   const navigate = useNavigate();
+  const { addItem } = useCustomerCart();
+  const { pharmacy } = useTenant() ?? {};
+  const [rxOrderDraft, setRxOrderDraft] = useState({ medicineId: null, awaitingDetails: false });
   const [messages, setMessages] = useState([
     {
       id: "welcome",
@@ -33,6 +39,9 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
   const [isTyping, setIsTyping] = useState(false);
   const [chatId, setChatId] = useState(() =>
     typeof window !== "undefined" ? localStorage.getItem(CHAT_ID_KEY) ?? "" : ""
+  );
+  const [sessionId, setSessionId] = useState(() =>
+    typeof window !== "undefined" ? localStorage.getItem(SESSION_ID_KEY) ?? "" : ""
   );
   const [uploadState, setUploadState] = useState({
     files: [],
@@ -117,6 +126,99 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
     const trimmed = inputValue.trim();
     if (!trimmed) return;
 
+    if (rxOrderDraft.awaitingDetails && rxOrderDraft.medicineId) {
+      const phoneMatch = trimmed.match(/(\+\d{7,15})/);
+      const phone = phoneMatch ? phoneMatch[1] : "";
+      const nameMatch = trimmed.match(/\b(my name is|i am|i'm)\s+([a-zA-Z][a-zA-Z\s'-]{1,60})\b/i);
+      const name = nameMatch ? nameMatch[2].trim() : "";
+      const address = trimmed.replace(phone, "").replace(nameMatch?.[0] ?? "", "").replace(/^[,\s]+|[,\s]+$/g, "");
+      if (!phone || !address || !name) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `bot-action-${Date.now()}`,
+            type: "bot",
+            text: "Please include name, phone (+E.164), and address in one message.",
+            timestamp: new Date(),
+            allowPrescriptionUpload: false,
+          },
+        ]);
+        setInputValue("");
+        return;
+      }
+      let draftPrescriptionTokens = [];
+      if (typeof window !== "undefined") {
+        try {
+          const raw = localStorage.getItem("customer_prescription_draft_tokens");
+          const parsed = raw ? JSON.parse(raw) : [];
+          draftPrescriptionTokens = Array.isArray(parsed) ? parsed.filter(Boolean) : [];
+        } catch {
+          draftPrescriptionTokens = [];
+        }
+      }
+      if (!draftPrescriptionTokens.length) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `bot-action-${Date.now()}`,
+            type: "bot",
+            text: "Please upload your prescription first.",
+            timestamp: new Date(),
+            allowPrescriptionUpload: true,
+          },
+        ]);
+        setInputValue("");
+        return;
+      }
+
+      const userMessage = {
+        id: `user-${Date.now()}`,
+        type: "user",
+        text: trimmed,
+        timestamp: new Date(),
+      };
+      setMessages((prev) => [...prev, userMessage]);
+      setInputValue("");
+      setIsTyping(true);
+      try {
+        const res = await api.post("/orders/rx", {
+          customer_name: name,
+          customer_phone: phone,
+          customer_address: address,
+          customer_notes: null,
+          medicine_id: Number(rxOrderDraft.medicineId),
+          quantity: 1,
+          draft_prescription_tokens: draftPrescriptionTokens,
+        });
+        setRxOrderDraft({ medicineId: null, awaitingDetails: false });
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `bot-action-${Date.now()}`,
+            type: "bot",
+            text: `Rx order placed (Order #${res.data?.order_id ?? "?"}). A pharmacist can now review and approve your prescription.`,
+            timestamp: new Date(),
+            allowPrescriptionUpload: false,
+            quickReplies: ["Contact pharmacy"],
+          },
+        ]);
+      } catch (err) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `bot-action-${Date.now()}`,
+            type: "bot",
+            text: err?.response?.data?.detail ?? "Couldn't place the Rx order. Please try again.",
+            timestamp: new Date(),
+            allowPrescriptionUpload: false,
+          },
+        ]);
+      } finally {
+        setIsTyping(false);
+      }
+      return;
+    }
+
     const userMessage = {
       id: `user-${Date.now()}`,
       type: "user",
@@ -131,7 +233,7 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
     try {
       const res = await api.post(
         "/ai/chat",
-        { message: trimmed },
+        { message: trimmed, session_id: sessionId || undefined },
         { headers: chatId ? { "X-Chat-ID": chatId } : {} }
       );
       const nextChatId = res.data?.customer_id ?? chatId;
@@ -141,16 +243,33 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
           localStorage.setItem(CHAT_ID_KEY, nextChatId);
         }
       }
+      const nextSessionId = res.data?.session_id ?? sessionId;
+      if (nextSessionId && nextSessionId !== sessionId) {
+        setSessionId(nextSessionId);
+        if (typeof window !== "undefined") {
+          localStorage.setItem(SESSION_ID_KEY, nextSessionId);
+        }
+      }
 
       const answer = res.data?.answer ?? "";
+      const dataLastUpdatedAt = res.data?.data_last_updated_at ?? null;
+      const indexedAt = res.data?.indexed_at ?? null;
       const botMessage = {
         id: `bot-${res.data?.interaction_id ?? Date.now()}`,
         type: "bot",
         text: answer,
         timestamp: new Date(res.data?.created_at ?? Date.now()),
         allowPrescriptionUpload: shouldOfferPrescriptionUpload(answer),
+        freshness: {
+          dataLastUpdatedAt,
+          indexedAt,
+        },
+        actions: Array.isArray(res.data?.actions) ? res.data.actions : [],
+        cards: Array.isArray(res.data?.cards) ? res.data.cards : [],
+        quickReplies: Array.isArray(res.data?.quick_replies) ? res.data.quick_replies : [],
       };
       setMessages((prev) => [...prev, botMessage]);
+
     } catch {
       setMessages((prev) => [
         ...prev,
@@ -209,9 +328,20 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
         {
           id: `bot-prescription-${Date.now()}`,
           type: "bot",
-          text: "Prescription received. A pharmacist can review it once you place your medicine order.",
+          text:
+            "Prescription received. Rx medicines are not added to cart. If you'd like, I can place the Rx order now so the pharmacist can approve it.",
+          actions: rxOrderDraft.medicineId
+            ? [
+                {
+                  type: "place_rx_order",
+                  label: "Place Rx order",
+                  medicine_id: rxOrderDraft.medicineId,
+                },
+              ]
+            : [],
           timestamp: new Date(),
           allowPrescriptionUpload: false,
+          quickReplies: ["Search another medicine", "Shop OTC products", "Book appointment", "Contact pharmacy"],
         },
       ]);
     } catch (err) {
@@ -230,7 +360,9 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
       : "fixed bottom-6 right-6 w-96 max-w-[calc(100vw-3rem)]";
 
   return (
-    <div className={`${containerClassName} bg-white rounded-2xl shadow-2xl overflow-hidden z-50 flex flex-col h-[560px] max-h-[calc(100vh-6rem)]`}>
+    <div
+      className={`${containerClassName} bg-white rounded-2xl shadow-2xl overflow-hidden z-50 flex flex-col h-[560px] max-h-[calc(100vh-6rem)]`}
+    >
       <div className="bg-gradient-to-r from-[var(--brand-primary)] to-[var(--brand-primary-600)] text-white px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 bg-white rounded-full flex items-center justify-center">
@@ -277,6 +409,138 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
                       ))}
                     </div>
                   ) : null}
+                  {message.cards && message.cards.length > 0 ? (
+                    <div className="mt-3 space-y-2 max-w-[85%]">
+                      {message.cards.map((card) => (
+                        <div key={card.medicine_id} className="bg-white/70 border border-slate-200 rounded-xl p-3">
+                          <div className="text-sm font-semibold text-gray-900">{card.name}</div>
+                          <div className="text-xs text-gray-600 mt-1">
+                            {card.dosage ? `Dosage: ${card.dosage} Â· ` : ""}
+                            {card.rx ? "Rx required" : "OTC"} Â· Stock: {Number(card.stock ?? 0)}
+                          </div>
+                          <div className="text-xs text-gray-600 mt-1">
+                            {card.price != null ? `Price: ${Number(card.price).toFixed(2)}` : "Price: -"} Â·{" "}
+                            {card.updated_at ? `Updated: ${new Date(card.updated_at).toLocaleString()}` : "Updated: -"}
+                          </div>
+                          {card.indexed_at ? (
+                            <div className="text-[11px] text-gray-500 mt-1">
+                              Indexed: {new Date(card.indexed_at).toLocaleString()}
+                            </div>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                  {message.actions && message.actions.length > 0 ? (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {message.actions.map((action, index) => (
+                        <button
+                          key={`${action.type}-${action.medicine_id ?? "x"}-${index}`}
+                          type="button"
+                          onClick={() => {
+                            if (action.type === "place_rx_order" && action.medicine_id) {
+                              setRxOrderDraft({ medicineId: Number(action.medicine_id), awaitingDetails: true });
+                              setMessages((prev) => [
+                                ...prev,
+                                {
+                                  id: `bot-action-${Date.now()}`,
+                                  type: "bot",
+                                  text:
+                                    "To place the Rx order, please reply with: name, phone (+E.164), and address. Example: \"My name is Ali, +15551234567, 123 Main St\"",
+                                  timestamp: new Date(),
+                                  allowPrescriptionUpload: false,
+                                },
+                              ]);
+                              return;
+                            }
+                            if (action.type === "add_to_cart" && action.medicine_id) {
+                              const resolvedPharmacyId = Number(pharmacy?.id ?? 0);
+                              api
+                                .post(`/pharmacies/${resolvedPharmacyId}/cart/items`, {
+                                  medicine_id: Number(action.medicine_id),
+                                  quantity: Number(action.payload?.quantity ?? 1),
+                                })
+                                .then((res) => {
+                                  const item = res.data ?? {};
+                                  addItem({
+                                    item_type: "medicine",
+                                    item_id: item.medicine_id,
+                                    name: item.name,
+                                    price: item.price,
+                                  });
+                                  setMessages((prev) => [
+                                    ...prev,
+                                    {
+                                      id: `bot-action-${Date.now()}`,
+                                      type: "bot",
+                                      text: "Added. Do you want another medicine or any other service?",
+                                      timestamp: new Date(),
+                                      allowPrescriptionUpload: false,
+                                      quickReplies: ["Search another medicine", "Shop OTC products", "Book appointment", "Contact pharmacy"],
+                                    },
+                                  ]);
+                                })
+                                .catch(() => {
+                                  setMessages((prev) => [
+                                    ...prev,
+                                    {
+                                      id: `bot-action-${Date.now()}`,
+                                      type: "bot",
+                                      text: "I couldn't add that to the cart. Please try again.",
+                                      timestamp: new Date(),
+                                      allowPrescriptionUpload: false,
+                                    },
+                                  ]);
+                                });
+                              return;
+                            }
+                            if (action.type === "upload_prescription") {
+                              setRxOrderDraft({ medicineId: Number(action.medicine_id ?? 0) || null });
+                              setMessages((prev) => [
+                                ...prev,
+                                {
+                                  id: `bot-action-${Date.now()}`,
+                                  type: "bot",
+                                  text: "Please upload your prescription below.",
+                                  timestamp: new Date(),
+                                  allowPrescriptionUpload: true,
+                                },
+                              ]);
+                              return;
+                            }
+                          }}
+                          className="px-3 py-1.5 text-sm bg-white/80 border border-[var(--brand-primary)] text-[var(--brand-primary)] rounded-full hover:bg-[var(--brand-primary)] hover:text-white transition-colors"
+                        >
+                          {action.label ?? action.type}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                  {message.quickReplies && message.quickReplies.length > 0 ? (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {message.quickReplies.map((reply) => (
+                        <button
+                          key={reply}
+                          type="button"
+                          onClick={() => handleSuggestionClick(reply)}
+                          className="px-3 py-1.5 text-sm bg-white/80 border border-slate-200 text-gray-700 rounded-full hover:bg-slate-100 transition-colors"
+                        >
+                          {reply}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                  {message.freshness && (message.freshness.dataLastUpdatedAt || message.freshness.indexedAt) ? (
+                    <div className="mt-2 text-[11px] text-gray-500">
+                      {message.freshness.dataLastUpdatedAt
+                        ? `Data last updated: ${new Date(message.freshness.dataLastUpdatedAt).toLocaleString()}`
+                        : "Data last updated: â€”"}
+                      {" Â· "}
+                      {message.freshness.indexedAt
+                        ? `Indexed at: ${new Date(message.freshness.indexedAt).toLocaleString()}`
+                        : "Indexed at: â€”"}
+                    </div>
+                  ) : null}
                   {message.allowPrescriptionUpload ? (
                     <form onSubmit={handleUpload} className="mt-3 space-y-2">
                       <input
@@ -288,12 +552,8 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
                         }
                         className="w-full text-sm"
                       />
-                      {uploadState.error ? (
-                        <p className="text-xs text-red-600">{uploadState.error}</p>
-                      ) : null}
-                      {uploadState.status ? (
-                        <p className="text-xs text-green-600">{uploadState.status}</p>
-                      ) : null}
+                      {uploadState.error ? <p className="text-xs text-red-600">{uploadState.error}</p> : null}
+                      {uploadState.status ? <p className="text-xs text-green-600">{uploadState.status}</p> : null}
                       {uploadState.tokens && uploadState.tokens.length > 0 ? (
                         <p className="text-[11px] text-gray-600">
                           Saved on this device. You can also keep this reference: {uploadState.tokens[0]}
@@ -327,8 +587,14 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
             <div className="bg-white px-4 py-3 rounded-2xl shadow-sm">
               <div className="flex gap-1">
                 <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
-                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "0.1s" }}></div>
-                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "0.2s" }}></div>
+                <div
+                  className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
+                  style={{ animationDelay: "0.1s" }}
+                ></div>
+                <div
+                  className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
+                  style={{ animationDelay: "0.2s" }}
+                ></div>
               </div>
             </div>
           </div>

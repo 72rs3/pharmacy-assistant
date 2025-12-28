@@ -3,6 +3,7 @@ import { Link, Navigate, useNavigate } from "react-router-dom";
 import api from "../api/axios";
 import { useAuth } from "../context/AuthContext";
 import { isPortalHost } from "../utils/tenant";
+import { isValidEmail } from "../utils/validation";
 
 export default function Login() {
   const { login } = useAuth();
@@ -19,6 +20,10 @@ export default function Login() {
   const handleSubmit = async (event) => {
     event.preventDefault();
     setError("");
+    if (!isValidEmail(email)) {
+      setError("Enter a valid email address.");
+      return;
+    }
     setIsSubmitting(true);
 
     try {

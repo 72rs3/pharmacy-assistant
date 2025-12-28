@@ -4,6 +4,7 @@ import api from "../api/axios";
 import EmptyState from "../components/ui/EmptyState";
 import { useCustomerUi } from "../utils/customer-ui";
 import { useCustomerCart } from "../context/CustomerCartContext";
+import { useTenant } from "../context/TenantContext";
 
 const formatMoney = (value) => new Intl.NumberFormat(undefined, { style: "currency", currency: "USD" }).format(value);
 
@@ -183,6 +184,12 @@ const getProductPresentation = (item) => {
 export default function Shop() {
   const { openChat } = useCustomerUi();
   const { addItem } = useCustomerCart();
+  const { pharmacy } = useTenant() ?? {};
+  const theme = String(pharmacy?.theme_preset ?? "classic").toLowerCase();
+  const isGlass = theme === "glass";
+  const isNeumorph = theme === "neumorph";
+  const isMinimal = theme === "minimal";
+  const isFresh = theme === "fresh";
   const [products, setProducts] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
@@ -330,18 +337,29 @@ export default function Shop() {
             }
           />
         ) : (
-          <section className="grid md:grid-cols-3 lg:grid-cols-4 gap-6">
+          <section
+            className={`grid gap-6 ${
+              isMinimal ? "md:grid-cols-2 lg:grid-cols-3" : "md:grid-cols-3 lg:grid-cols-4"
+            }`}
+          >
             {filtered.map((product) => {
               const stock = Number(product.stock_level ?? 0);
               const presentation = getProductPresentation(product);
               const Icon = presentation.Icon;
               const tone = colorClasses[presentation.color] ?? colorClasses.sky;
+              const cardClass = isGlass
+                ? "bg-white/70 backdrop-blur border border-white/70 shadow-lg"
+                : isNeumorph
+                  ? "bg-slate-100 border border-slate-200 shadow-[inset_-12px_-12px_24px_rgba(255,255,255,0.85),inset_12px_12px_24px_rgba(15,23,42,0.12)]"
+                  : isFresh
+                    ? "bg-white/95 border border-emerald-100 shadow-[0_18px_34px_rgba(16,185,129,0.16)]"
+                    : "bg-white shadow-md";
               return (
                 <div
                   key={product.id}
-                  className="bg-white rounded-xl shadow-md hover:shadow-xl transition-all hover:-translate-y-1 overflow-hidden group"
+                  className={`${cardClass} rounded-2xl transition-all hover:-translate-y-1 overflow-hidden group`}
                 >
-                  <div className="relative h-48 bg-gray-100 overflow-hidden">
+                  <div className={`relative h-48 ${isNeumorph ? "bg-slate-100" : "bg-gray-100"} overflow-hidden`}>
                     <img
                       src={product.image_url || presentation.image}
                       alt={product.name}
@@ -354,7 +372,7 @@ export default function Shop() {
                   <div className="p-4">
                     <div className="text-xs text-gray-500 mb-1">
                       {product.category ? product.category : "Product"}
-                      {stock > 0 ? ` • ${stock} in stock` : " • Out of stock"}
+                      {stock > 0 ? ` - ${stock} in stock` : " - Out of stock"}
                     </div>
                     <h3 className="text-lg text-gray-900 mb-2 line-clamp-2">{product.name}</h3>
                     <div className="flex items-center justify-between gap-3">
@@ -371,7 +389,13 @@ export default function Shop() {
                           });
                         }}
                         disabled={isUsingFallback}
-                        className="px-4 py-2 bg-[var(--brand-accent)] text-white rounded-lg hover:opacity-95 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors text-sm"
+                        className={`px-4 py-2 text-white disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors text-sm ${
+                          isNeumorph
+                            ? "rounded-2xl bg-[var(--brand-accent)] shadow-[0_12px_24px_rgba(15,23,42,0.18)]"
+                            : isFresh
+                              ? "rounded-full bg-[var(--brand-accent)] shadow-[0_12px_22px_rgba(16,185,129,0.2)] hover:opacity-95"
+                              : "rounded-lg bg-[var(--brand-accent)] hover:opacity-95"
+                        }`}
                       >
                         {isUsingFallback ? "Unavailable" : "Add to Cart"}
                       </button>
@@ -406,4 +430,3 @@ export default function Shop() {
     </div>
   );
 }
-

@@ -10,6 +10,7 @@ from app import models, schemas
 from app.auth.deps import require_approved_owner, require_pharmacy_owner
 from app.db import get_db
 from app.deps import get_active_public_pharmacy_id, get_current_pharmacy_id
+from app.utils.validation import validate_e164_phone
 
 router = APIRouter(prefix="/orders", tags=["Orders"])
 
@@ -143,7 +144,7 @@ def create_customer_order(
     order = models.Order(
         customer_id=tracking_code,
         customer_name=payload.customer_name.strip(),
-        customer_phone=payload.customer_phone.strip(),
+        customer_phone=validate_e164_phone(payload.customer_phone, "customer"),
         customer_address=payload.customer_address.strip(),
         customer_notes=(payload.customer_notes.strip() if payload.customer_notes else None),
         status="PENDING",
@@ -172,6 +173,89 @@ def create_customer_order(
         payment_status=order.payment_status,
         order_date=order.order_date,
         requires_prescription=requires_prescription,
+    )
+
+
+@router.post("/rx", response_model=schemas.CustomerOrderCreated)
+def create_customer_rx_order(
+    payload: schemas.CustomerRxOrderCreate,
+    db: Session = Depends(get_db),
+    tenant_pharmacy_id: int = Depends(get_active_public_pharmacy_id),
+):
+    if payload.quantity <= 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Quantity must be positive")
+    draft_tokens = [t.strip() for t in (payload.draft_prescription_tokens or []) if t and t.strip()]
+    if not draft_tokens:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Upload prescription before placing this order.")
+
+    medicine = (
+        db.query(models.Medicine)
+        .filter(models.Medicine.pharmacy_id == tenant_pharmacy_id, models.Medicine.id == int(payload.medicine_id))
+        .first()
+    )
+    if not medicine:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Medicine not found")
+    if not bool(medicine.prescription_required):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This medicine does not require a prescription")
+    if int(medicine.stock_level or 0) < int(payload.quantity):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Insufficient stock")
+
+    draft_prescriptions = (
+        db.query(models.Prescription)
+        .filter(
+            models.Prescription.pharmacy_id == tenant_pharmacy_id,
+            models.Prescription.order_id.is_(None),
+            models.Prescription.status == "DRAFT",
+            models.Prescription.draft_token.in_(draft_tokens),
+        )
+        .all()
+    )
+    found = {p.draft_token for p in draft_prescriptions if p.draft_token}
+    missing = [t for t in draft_tokens if t not in found]
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Some uploaded prescriptions could not be found for this pharmacy.",
+        )
+
+    tracking_code = secrets.token_urlsafe(16)
+    order = models.Order(
+        customer_id=tracking_code,
+        customer_name=payload.customer_name.strip(),
+        customer_phone=validate_e164_phone(payload.customer_phone, "customer"),
+        customer_address=payload.customer_address.strip(),
+        customer_notes=(payload.customer_notes.strip() if payload.customer_notes else None),
+        status="PENDING",
+        payment_method="COD",
+        payment_status="UNPAID",
+        order_date=datetime.utcnow(),
+        pharmacy_id=tenant_pharmacy_id,
+    )
+    db.add(order)
+    db.flush()
+
+    db.add(
+        models.OrderItem(
+            order_id=order.id,
+            medicine_id=int(medicine.id),
+            quantity=int(payload.quantity),
+            unit_price=float(medicine.price),
+        )
+    )
+
+    for prescription in draft_prescriptions:
+        prescription.order_id = order.id
+        prescription.status = "PENDING"
+
+    db.commit()
+    return schemas.CustomerOrderCreated(
+        order_id=order.id,
+        tracking_code=tracking_code,
+        status=order.status,
+        payment_method=order.payment_method,
+        payment_status=order.payment_status,
+        order_date=order.order_date,
+        requires_prescription=True,
     )
 
 

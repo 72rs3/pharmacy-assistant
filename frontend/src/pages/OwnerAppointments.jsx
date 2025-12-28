@@ -3,10 +3,18 @@ import { RefreshCw } from "lucide-react";
 import api from "../api/axios";
 
 const formatDate = (value) => {
-  if (!value) return "—";
+  if (!value) return "--";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return String(value);
   return date.toLocaleString();
+};
+
+const toLocalInputValue = (value) => {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const offset = date.getTimezoneOffset() * 60000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
 };
 
 const statusPill = (status) => {
@@ -22,6 +30,7 @@ const STATUS_OPTIONS = ["PENDING", "CONFIRMED", "CANCELLED", "COMPLETED"];
 export default function OwnerAppointments() {
   const [appointments, setAppointments] = useState([]);
   const [statusById, setStatusById] = useState({});
+  const [timeById, setTimeById] = useState({});
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
   const [actionError, setActionError] = useState("");
@@ -41,6 +50,12 @@ export default function OwnerAppointments() {
           return acc;
         }, {})
       );
+      setTimeById(
+        data.reduce((acc, appt) => {
+          acc[appt.id] = toLocalInputValue(appt.scheduled_time);
+          return acc;
+        }, {})
+      );
     } catch (e) {
       setAppointments([]);
       setError(e?.response?.data?.detail ?? "Failed to load appointments");
@@ -53,16 +68,17 @@ export default function OwnerAppointments() {
     loadAppointments();
   }, []);
 
-  const updateStatus = async (appointmentId) => {
+  const updateAppointment = async (appointmentId) => {
     setActionError("");
     setIsSavingId(appointmentId);
     try {
-      const res = await api.post(`/appointments/${appointmentId}/status`, {
+      const res = await api.patch(`/appointments/${appointmentId}`, {
         status: statusById[appointmentId],
+        scheduled_time: timeById[appointmentId] || null,
       });
       setAppointments((prev) => prev.map((item) => (item.id === appointmentId ? res.data : item)));
     } catch (e) {
-      setActionError(e?.response?.data?.detail ?? "Failed to update status");
+      setActionError(e?.response?.data?.detail ?? "Failed to update appointment");
     } finally {
       setIsSavingId(null);
     }
@@ -148,15 +164,15 @@ export default function OwnerAppointments() {
                         </span>
                       </div>
                       <div className="text-sm text-slate-500 mt-1">
-                        {appt.type ?? "Appointment"} • {formatDate(appt.scheduled_time)}
+                        {appt.type ?? "Appointment"} - {formatDate(appt.scheduled_time)}
                       </div>
                     </div>
                     <div className="flex flex-wrap items-center gap-2 text-xs">
                       <span className="inline-flex items-center px-2.5 py-1 rounded-full border border-slate-200 bg-slate-50 text-slate-800">
-                        Customer: {appt.customer_name ?? "—"}
+                        Customer: {appt.customer_name ?? "--"}
                       </span>
                       <span className="inline-flex items-center px-2.5 py-1 rounded-full border border-slate-200 bg-slate-50 text-slate-800">
-                        Phone: {appt.customer_phone ?? "—"}
+                        Phone: {appt.customer_phone ?? "--"}
                       </span>
                       {appt.vaccine_name ? (
                         <span className="inline-flex items-center px-2.5 py-1 rounded-full border border-slate-200 bg-slate-50 text-slate-800">
@@ -166,8 +182,8 @@ export default function OwnerAppointments() {
                     </div>
                   </div>
 
-                  <div className="px-6 py-5 flex flex-col md:flex-row md:items-end gap-3">
-                    <div className="flex-1">
+                  <div className="px-6 py-5 grid gap-3 md:grid-cols-[1fr_1fr_auto] md:items-end">
+                    <div>
                       <label className="block text-xs font-medium text-slate-600 mb-1" htmlFor={`appt-status-${appt.id}`}>
                         Status
                       </label>
@@ -184,9 +200,21 @@ export default function OwnerAppointments() {
                         ))}
                       </select>
                     </div>
+                    <div>
+                      <label className="block text-xs font-medium text-slate-600 mb-1" htmlFor={`appt-time-${appt.id}`}>
+                        Reschedule time
+                      </label>
+                      <input
+                        id={`appt-time-${appt.id}`}
+                        type="datetime-local"
+                        value={timeById[appt.id] ?? ""}
+                        onChange={(event) => setTimeById((prev) => ({ ...prev, [appt.id]: event.target.value }))}
+                        className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-4 focus:ring-blue-100"
+                      />
+                    </div>
                     <button
                       type="button"
-                      onClick={() => updateStatus(appt.id)}
+                      onClick={() => updateAppointment(appt.id)}
                       disabled={isSavingId === appt.id}
                       className="px-5 py-3 rounded-xl bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60"
                     >
@@ -202,4 +230,3 @@ export default function OwnerAppointments() {
     </div>
   );
 }
-

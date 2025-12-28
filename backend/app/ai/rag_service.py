@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import difflib
 import json
 import os
 import re
@@ -12,6 +13,8 @@ from sqlalchemy.orm import Session
 from app import models
 from app.ai.provider_factory import get_ai_provider
 from app.ai.providers.base import ChatMessage
+from app.config.rag import get_rag_config
+from app.ai.openrouter_client import openrouter_embed
 
 
 @dataclass(frozen=True)
@@ -102,6 +105,53 @@ _FOLLOW_UP_INTENT = {
     "otc",
     "rx",
     "prescription",
+    "effect",
+    "effects",
+    "side",
+    "sideeffects",
+}
+
+_HOURS_INTENT = {
+    "hours",
+    "open",
+    "opening",
+    "closing",
+    "schedule",
+    "time",
+    "working",
+}
+
+_DELIVERY_INTENT = {
+    "delivery",
+    "deliver",
+    "shipping",
+    "cod",
+    "cash",
+    "payment",
+}
+
+_APPOINTMENT_INTENT = {
+    "appointment",
+    "book",
+    "booking",
+    "schedule",
+    "visit",
+    "consultation",
+    "vaccination",
+}
+
+_AVAILABILITY_INTENT = {
+    "availability",
+    "available",
+    "stock",
+    "price",
+    "cost",
+    "rx",
+    "prescription",
+    "otc",
+    "medicine",
+    "medication",
+    "drug",
 }
 
 
@@ -122,10 +172,23 @@ def _is_follow_up_without_subject(message: str) -> bool:
     tokens = _normalize_tokens(message)
     if not tokens:
         return False
+    msg = " ".join(tokens)
+    if "that medicine" in msg:
+        return True
     if not any(t in _FOLLOW_UP_INTENT for t in tokens):
         return False
     subject_tokens = [t for t in tokens if t not in _STOPWORDS and t not in _FOLLOW_UP_INTENT and len(t) >= 4]
     return len(subject_tokens) == 0
+
+
+def _matches_intent(message: str, intent: set[str]) -> bool:
+    tokens = _normalize_tokens(message)
+    return any(t in intent for t in tokens)
+
+
+def _has_subject_token(message: str, intent: set[str]) -> bool:
+    tokens = _normalize_tokens(message)
+    return any(t not in _STOPWORDS and t not in intent and len(t) >= 3 for t in tokens)
 
 
 def _medicine_text(medicine: models.Medicine) -> str:
@@ -141,6 +204,64 @@ def _medicine_text(medicine: models.Medicine) -> str:
             f"Side effects: {medicine.side_effects or '-'}",
         ]
     )
+
+
+def _product_text(product: models.Product) -> str:
+    return "\n".join(
+        [
+            f"Product: {product.name}",
+            f"Category: {product.category or '-'}",
+            f"Price: {product.price}",
+            f"Stock: {product.stock_level}",
+            f"Description: {product.description or '-'}",
+        ]
+    )
+
+
+def _summarize_medicine(medicine: models.Medicine) -> str:
+    rx = "Prescription required" if medicine.prescription_required else "OTC"
+    price = f"{medicine.price:.2f}" if medicine.price is not None else "-"
+    return f"{medicine.name} - {rx}, price {price}, stock {medicine.stock_level}"
+
+
+def _appointment_summary_text(services: list[str], slots: list[str]) -> str:
+    services_line = ", ".join(services) if services else "-"
+    slots_line = ", ".join(slots) if slots else "-"
+    return "\n".join(
+        [
+            "Appointments summary",
+            f"Available services: {services_line}",
+            f"Next available slots: {slots_line}",
+        ]
+    )
+
+
+def _find_medicine_matches(db: Session, pharmacy_id: int, message: str, *, limit: int = 3) -> list[models.Medicine]:
+    tokens = [t for t in _normalize_tokens(message) if t not in _STOPWORDS and t not in _AVAILABILITY_INTENT and len(t) >= 3]
+    if not tokens:
+        return []
+    filters = [models.Medicine.name.ilike(f"%{token}%") for token in tokens]
+    return (
+        db.query(models.Medicine)
+        .filter(models.Medicine.pharmacy_id == pharmacy_id, or_(*filters))
+        .order_by(models.Medicine.name.asc())
+        .limit(limit)
+        .all()
+    )
+
+
+def _find_fuzzy_medicine_matches(db: Session, pharmacy_id: int, message: str, *, limit: int = 3) -> list[models.Medicine]:
+    tokens = [t for t in _normalize_tokens(message) if t not in _STOPWORDS and t not in _AVAILABILITY_INTENT and len(t) >= 3]
+    if not tokens:
+        return []
+    needle = " ".join(tokens).lower()
+    meds = db.query(models.Medicine).filter(models.Medicine.pharmacy_id == pharmacy_id).all()
+    if not meds:
+        return []
+    name_map = {str(med.name or "").lower(): med for med in meds if med.name}
+    names = list(name_map.keys())
+    close = difflib.get_close_matches(needle, names, n=limit, cutoff=0.72)
+    return [name_map[name] for name in close]
 
 
 def _score_medicine(medicine: models.Medicine, tokens: list[str], normalized_query: str) -> float:
@@ -201,10 +322,22 @@ async def upsert_medicine_index(db: Session, pharmacy_id: int) -> int:
 
     provider = get_ai_provider()
 
-    # Remove existing medicine documents and the per-pharmacy playbook (keep other source types for future).
+    now = datetime.utcnow()
+    version_map = {
+        doc.source_key: (doc.version or 0)
+        for doc in db.query(models.Document)
+        .filter(models.Document.pharmacy_id == pharmacy_id)
+        .all()
+        if doc.source_key
+    }
+
+    # Remove existing medicine/product/appointment documents and the per-pharmacy playbook (keep other source types for future).
     docs = (
         db.query(models.Document)
-        .filter(models.Document.pharmacy_id == pharmacy_id, models.Document.source_type == "medicine")
+        .filter(
+            models.Document.pharmacy_id == pharmacy_id,
+            models.Document.source_type.in_(["medicine", "product", "appointment"]),
+        )
         .all()
     )
     for doc in docs:
@@ -225,6 +358,15 @@ async def upsert_medicine_index(db: Session, pharmacy_id: int) -> int:
     db.flush()
 
     medicines = db.query(models.Medicine).filter(models.Medicine.pharmacy_id == pharmacy_id).all()
+    products = db.query(models.Product).filter(models.Product.pharmacy_id == pharmacy_id).all()
+    appointments = (
+        db.query(models.Appointment)
+        .filter(
+            models.Appointment.pharmacy_id == pharmacy_id,
+            models.Appointment.status.in_(["PENDING", "CONFIRMED"]),
+        )
+        .all()
+    )
     chunks_to_embed: list[tuple[models.DocumentChunk, str]] = []
 
     pharmacy = db.query(models.Pharmacy).filter(models.Pharmacy.id == pharmacy_id).first()
@@ -236,17 +378,28 @@ async def upsert_medicine_index(db: Session, pharmacy_id: int) -> int:
         title=f"Pharmacy assistant playbook: {pharmacy_name}",
         source_type="pharmacy",
         source_key="pharmacy:playbook",
-        created_at=datetime.utcnow(),
+        created_at=now,
+        updated_at=now,
+        data_updated_at=pharmacy.updated_at if pharmacy else None,
+        indexed_at=now,
+        version=version_map.get("pharmacy:playbook", 0) + 1,
         pharmacy_id=pharmacy_id,
     )
     db.add(playbook_doc)
     db.flush()
+
+    contact_phone = (getattr(pharmacy, "contact_phone", None) if pharmacy else None) or "-"
+    contact_email = (getattr(pharmacy, "contact_email", None) if pharmacy else None) or "-"
+    contact_address = (getattr(pharmacy, "contact_address", None) if pharmacy else None) or "-"
 
     playbook_content = "\n".join(
         [
             f"Pharmacy: {pharmacy_name}",
             f"Operating hours: {hours}",
             f"Cash on delivery (COD): {'Yes' if cod else 'No'}",
+            f"Contact phone: {contact_phone}",
+            f"Contact email: {contact_email}",
+            f"Contact address: {contact_address}",
             "",
             "Assistant role:",
             "- Help customers with questions about medicines available in THIS pharmacy.",
@@ -254,6 +407,9 @@ async def upsert_medicine_index(db: Session, pharmacy_id: int) -> int:
             "",
             "How to respond:",
             "- If the user greets (hello/hi/hey), greet back and ask what medicine they are looking for.",
+            "- If asked about store hours, share the Operating hours line.",
+            "- If asked about delivery/payment, explain COD availability.",
+            "- If asked to book an appointment, tell them to use the appointments page and ask for a preferred time.",
             "- If asked about availability/price/stock/Rx requirement, answer from the medicine source.",
             "- If the sources do not contain the answer, say: I don't know.",
             "- If the question is medical-risk (e.g., chest pain, overdose), escalate to the pharmacist.",
@@ -265,7 +421,10 @@ async def upsert_medicine_index(db: Session, pharmacy_id: int) -> int:
             chunk_index=idx,
             content=chunk,
             embedding=None,
-            created_at=datetime.utcnow(),
+            created_at=now,
+            updated_at=now,
+            indexed_at=now,
+            version=playbook_doc.version,
             pharmacy_id=pharmacy_id,
         )
         db.add(row)
@@ -278,7 +437,11 @@ async def upsert_medicine_index(db: Session, pharmacy_id: int) -> int:
             title=title,
             source_type="medicine",
             source_key=f"medicine:{medicine.id}",
-            created_at=datetime.utcnow(),
+            created_at=now,
+            updated_at=now,
+            data_updated_at=medicine.updated_at,
+            indexed_at=now,
+            version=version_map.get(f"medicine:{medicine.id}", 0) + 1,
             pharmacy_id=pharmacy_id,
         )
         db.add(doc)
@@ -292,18 +455,89 @@ async def upsert_medicine_index(db: Session, pharmacy_id: int) -> int:
                 chunk_index=idx,
                 content=chunk,
                 embedding=None,
-                created_at=datetime.utcnow(),
+                created_at=now,
+                updated_at=now,
+                indexed_at=now,
+                version=doc.version,
                 pharmacy_id=pharmacy_id,
             )
             db.add(row)
             db.flush()
             chunks_to_embed.append((row, chunk))
 
+    for product in products:
+        title = f"Product: {product.name}"
+        doc = models.Document(
+            title=title,
+            source_type="product",
+            source_key=f"product:{product.id}",
+            created_at=now,
+            updated_at=now,
+            data_updated_at=product.updated_at,
+            indexed_at=now,
+            version=version_map.get(f"product:{product.id}", 0) + 1,
+            pharmacy_id=pharmacy_id,
+        )
+        db.add(doc)
+        db.flush()
+
+        content = _product_text(product)
+        chunks = _chunk_text(content)
+        for idx, chunk in enumerate(chunks):
+            row = models.DocumentChunk(
+                document_id=doc.id,
+                chunk_index=idx,
+                content=chunk,
+                embedding=None,
+                created_at=now,
+                updated_at=now,
+                indexed_at=now,
+                version=doc.version,
+                pharmacy_id=pharmacy_id,
+            )
+            db.add(row)
+            db.flush()
+            chunks_to_embed.append((row, chunk))
+
+    service_types = sorted({appt.type for appt in appointments if appt.type})
+    upcoming_slots = sorted(
+        {appt.scheduled_time.isoformat() for appt in appointments if appt.scheduled_time and appt.scheduled_time >= now},
+    )
+    appointment_summary = _appointment_summary_text(service_types, upcoming_slots[:5])
+    appointment_doc = models.Document(
+        title=f"Appointments summary: {pharmacy_name}",
+        source_type="appointment",
+        source_key="appointment:summary",
+        created_at=now,
+        updated_at=now,
+        data_updated_at=now,
+        indexed_at=now,
+        version=version_map.get("appointment:summary", 0) + 1,
+        pharmacy_id=pharmacy_id,
+    )
+    db.add(appointment_doc)
+    db.flush()
+    for idx, chunk in enumerate(_chunk_text(appointment_summary)):
+        row = models.DocumentChunk(
+            document_id=appointment_doc.id,
+            chunk_index=idx,
+            content=chunk,
+            embedding=None,
+            created_at=now,
+            updated_at=now,
+            indexed_at=now,
+            version=appointment_doc.version,
+            pharmacy_id=pharmacy_id,
+        )
+        db.add(row)
+        db.flush()
+        chunks_to_embed.append((row, chunk))
+
     if not chunks_to_embed:
         db.commit()
         return 0
 
-    embeddings_enabled = (os.getenv("RAG_EMBEDDINGS_ENABLED") or "1").strip().lower() in {"1", "true", "yes", "on"}
+    embeddings_enabled = bool(get_rag_config().embeddings_enabled)
     if embeddings_enabled:
         embeddings = await provider.embed([chunk for _, chunk in chunks_to_embed])
         for (row, _), emb in zip(chunks_to_embed, embeddings):
@@ -325,6 +559,9 @@ def ensure_pharmacy_playbook(db: Session, pharmacy_id: int) -> None:
     pharmacy_name = (pharmacy.name if pharmacy else "").strip() or f"Pharmacy #{pharmacy_id}"
     hours = (pharmacy.operating_hours if pharmacy else None) or "-"
     cod = bool(getattr(pharmacy, "support_cod", True)) if pharmacy else True
+    contact_phone = (getattr(pharmacy, "contact_phone", None) if pharmacy else None) or "-"
+    contact_email = (getattr(pharmacy, "contact_email", None) if pharmacy else None) or "-"
+    contact_address = (getattr(pharmacy, "contact_address", None) if pharmacy else None) or "-"
 
     doc = (
         db.query(models.Document)
@@ -335,18 +572,27 @@ def ensure_pharmacy_playbook(db: Session, pharmacy_id: int) -> None:
         )
         .first()
     )
+    now = datetime.utcnow()
     if doc is None:
         doc = models.Document(
             title=f"Pharmacy assistant playbook: {pharmacy_name}",
             source_type="pharmacy",
             source_key="pharmacy:playbook",
-            created_at=datetime.utcnow(),
+            created_at=now,
+            updated_at=now,
+            data_updated_at=pharmacy.updated_at if pharmacy else None,
+            indexed_at=now,
+            version=1,
             pharmacy_id=pharmacy_id,
         )
         db.add(doc)
         db.flush()
     else:
         doc.title = f"Pharmacy assistant playbook: {pharmacy_name}"
+        doc.updated_at = now
+        doc.data_updated_at = pharmacy.updated_at if pharmacy else None
+        doc.indexed_at = now
+        doc.version = (doc.version or 0) + 1
         db.query(models.DocumentChunk).filter(models.DocumentChunk.document_id == doc.id).delete()
         db.flush()
 
@@ -355,6 +601,9 @@ def ensure_pharmacy_playbook(db: Session, pharmacy_id: int) -> None:
             f"Pharmacy: {pharmacy_name}",
             f"Operating hours: {hours}",
             f"Cash on delivery (COD): {'Yes' if cod else 'No'}",
+            f"Contact phone: {contact_phone}",
+            f"Contact email: {contact_email}",
+            f"Contact address: {contact_address}",
             "",
             "Assistant role:",
             "- Help customers with questions about medicines available in THIS pharmacy.",
@@ -362,6 +611,9 @@ def ensure_pharmacy_playbook(db: Session, pharmacy_id: int) -> None:
             "",
             "How to respond:",
             "- If the user greets (hello/hi/hey), greet back and ask what medicine they are looking for.",
+            "- If asked about store hours, share the Operating hours line.",
+            "- If asked about delivery/payment, explain COD availability.",
+            "- If asked to book an appointment, tell them to use the appointments page and ask for a preferred time.",
             "- If asked about availability/price/stock/Rx requirement, answer ONLY from medicine sources.",
             "- If the sources do not contain the answer, say: I don't know.",
             "- If the question is medical-risk (e.g., chest pain, overdose), escalate to the pharmacist.",
@@ -373,21 +625,118 @@ def ensure_pharmacy_playbook(db: Session, pharmacy_id: int) -> None:
             chunk_index=idx,
             content=chunk,
             embedding=None,
-            created_at=datetime.utcnow(),
+            created_at=now,
+            updated_at=now,
+            indexed_at=now,
+            version=doc.version,
             pharmacy_id=pharmacy_id,
         )
         db.add(row)
 
 
+async def answer_for_sources(
+    db: Session,
+    pharmacy_id: int,
+    customer_id: str,
+    message: str,
+    source_types: set[str],
+    *,
+    memory_context: list[str] | None = None,
+) -> tuple[str, float, bool, list[RetrievedChunk]]:
+    cfg = get_rag_config()
+    top_k = int(cfg.top_k)
+    retrieval_query = message
+    if memory_context and _is_follow_up_without_subject(message):
+        recent_questions = [q for q in memory_context if q]
+        last_question = next((q for q in reversed(recent_questions) if q.lower() != (message or "").strip().lower()), "")
+        if last_question:
+            retrieval_query = f"{message}\nRelated context: {last_question}"
+    chunks = await retrieve(db, pharmacy_id, retrieval_query, top_k=top_k)
+    if chunks and source_types:
+        doc_ids = {int(c.document_id) for c in chunks if c.document_id}
+        docs = (
+            db.query(models.Document)
+            .filter(models.Document.id.in_(doc_ids))
+            .all()
+        )
+        allowed = {int(doc.id) for doc in docs if doc.source_type in source_types}
+        chunks = [chunk for chunk in chunks if int(chunk.document_id) in allowed]
+
+    top_score = max((c.score for c in chunks), default=0.0)
+    min_score = _min_score_for_message(message)
+    weak_retrieval = (not chunks) or top_score < min_score
+    escalated = weak_retrieval
+
+    provider = get_ai_provider()
+    sources_max_chars = int(cfg.sources_max_chars)
+    sources_parts: list[str] = []
+    total = 0
+    for c in chunks:
+        if not c.content:
+            continue
+        block = f"[doc_id={c.document_id} chunk_id={c.id} title={c.source}]\n{c.content}"
+        if sources_max_chars > 0 and total + len(block) > sources_max_chars:
+            break
+        sources_parts.append(block)
+        total += len(block)
+    sources = "\n\n".join(sources_parts)
+    system = (
+        "You are a pharmacy assistant for a single pharmacy tenant.\n"
+        "You MUST answer ONLY from the provided SOURCES.\n"
+        "If the SOURCES do not contain enough information to answer, respond with exactly: I don't know.\n"
+        "Return valid JSON with keys: answer (string), citations (array).\n"
+        "Each citation must reference a SOURCE chunk_id and include: source_type, title, doc_id, chunk_id, preview, last_updated_at, score.\n"
+    )
+    user = f"Customer question:\n{message}\n\nSOURCES:\n{sources}\n\nReturn only JSON."
+
+    if weak_retrieval:
+        return "I don't know.", float(top_score), True, chunks
+
+    response = await provider.chat([ChatMessage(role="system", content=system), ChatMessage(role="user", content=user)])
+    raw = (response or "").strip()
+    extracted = _extract_json_object(raw)
+    if not extracted:
+        retry_system = system + "Output ONLY minified JSON. No markdown. No code fences.\n"
+        retry_user = (
+            f"Your previous response was not valid JSON.\n\n"
+            f"Customer question:\n{message}\n\nSOURCES:\n{sources}\n\n"
+            f"Return ONLY a JSON object with keys answer and citations."
+        )
+        retry = await provider.chat(
+            [ChatMessage(role="system", content=retry_system), ChatMessage(role="user", content=retry_user)]
+        )
+        extracted = _extract_json_object((retry or "").strip())
+        if not extracted:
+            cleaned = (raw or "").strip()
+            if cleaned and cleaned.lower() not in {"i don't know", "i don't know."}:
+                return cleaned, float(top_score), False, chunks
+            return "I don't know.", float(top_score), True, chunks
+    try:
+        data = json.loads(extracted)
+        answer_text = (data.get("answer") or "").strip()
+    except Exception:
+        cleaned = (raw or "").strip()
+        if cleaned and cleaned.lower() not in {"i don't know", "i don't know."}:
+            return cleaned, float(top_score), False, chunks
+        return "I don't know.", float(top_score), True, chunks
+
+    if answer_text.lower() in {"i don't know", "i don't know."}:
+        return "I don't know.", float(top_score), True, chunks
+
+    return answer_text, float(top_score), False, chunks
+
+
 async def retrieve(db: Session, pharmacy_id: int, query: str, *, top_k: int) -> list[RetrievedChunk]:
-    retrieval_mode = (os.getenv("RAG_RETRIEVAL_MODE") or "vector").strip().lower()
-    if retrieval_mode not in {"vector", "hybrid", "keyword"}:
-        retrieval_mode = "vector"
+    retrieval_mode = get_rag_config().retrieval_mode
     use_vector = retrieval_mode in {"vector", "hybrid"}
     query_emb: list[float] | None = None
     if use_vector:
-        provider = get_ai_provider()
-        query_emb = (await provider.embed([query]))[0]
+        embed_model = (os.getenv("OPENROUTER_EMBED_MODEL") or "").strip()
+        if (os.getenv("AI_PROVIDER") or "").strip().lower() == "openrouter" and embed_model:
+            query_emb = (await openrouter_embed(model=embed_model, texts=[query]))[0]
+        else:
+            provider = get_ai_provider()
+            query_emb = (await provider.embed([query]))[0]
 
     # Use pgvector distance if available (postgres). Otherwise fall back to naive substring ranking.
     if db.bind.dialect.name == "postgresql":
@@ -587,20 +936,39 @@ def _token_count(message: str) -> int:
 
 
 def _min_score_for_message(message: str) -> float:
-    base = float(os.getenv("RAG_MIN_SCORE", "0.35"))
-    short = float(os.getenv("RAG_MIN_SCORE_SHORT", "0.15"))
+    cfg = get_rag_config()
+    base = float(cfg.min_score)
+    short = float(cfg.min_score_short)
     return short if _token_count(message) <= 2 else base
 
 
-async def answer(db: Session, pharmacy_id: int, customer_id: str, message: str) -> tuple[str, float, bool, list[RetrievedChunk]]:
-    top_k = int(os.getenv("RAG_TOP_K", "6"))
-    inventory_top_k = int(os.getenv("RAG_INVENTORY_TOP_K", "4"))
+async def answer(
+    db: Session,
+    pharmacy_id: int,
+    customer_id: str,
+    message: str,
+    *,
+    memory_context: list[str] | None = None,
+) -> tuple[str, float, bool, list[RetrievedChunk]]:
+    cfg = get_rag_config()
+    top_k = int(cfg.top_k)
+    inventory_top_k = int(cfg.inventory_top_k)
+    pharmacy = db.query(models.Pharmacy).filter(models.Pharmacy.id == pharmacy_id).first()
+    pharmacy_name = (pharmacy.name if pharmacy else "").strip() or "our pharmacy"
+    hours = (pharmacy.operating_hours if pharmacy else None) or ""
+    cod = bool(getattr(pharmacy, "support_cod", True)) if pharmacy else True
+    contact_phone = (getattr(pharmacy, "contact_phone", None) if pharmacy else None) or ""
+    contact_email = (getattr(pharmacy, "contact_email", None) if pharmacy else None) or ""
     # Expand retrieval for follow-up queries like "what is the price?" by including the last customer question.
     retrieval_query = message
     recent_questions: list[str] = []
-    is_greeting = _is_greeting(message)
     is_follow_up = _is_follow_up_without_subject(message)
-    if customer_id and (is_follow_up or is_greeting):
+    if memory_context and is_follow_up:
+        recent_questions = [q for q in memory_context if q]
+        last_question = next((q for q in reversed(recent_questions) if q.lower() != (message or "").strip().lower()), "")
+        if last_question:
+            retrieval_query = f"{message}\nRelated context: {last_question}"
+    elif customer_id and is_follow_up:
         recent = (
             db.query(models.AIInteraction.customer_query)
             .filter(models.AIInteraction.pharmacy_id == pharmacy_id, models.AIInteraction.customer_id == customer_id)
@@ -613,8 +981,39 @@ async def answer(db: Session, pharmacy_id: int, customer_id: str, message: str) 
         if last_question and is_follow_up:
             retrieval_query = f"{message}\nRelated context: {last_question}"
 
-    if is_greeting:
-        retrieval_query = f"{message}\nRelated context: greeting pharmacy assistant"
+    if _matches_intent(message, _HOURS_INTENT):
+        if hours:
+            return f"Store hours: {hours}.", 0.0, False, []
+        return "Store hours have not been shared yet. Please contact the pharmacy for the latest schedule.", 0.0, False, []
+    if _matches_intent(message, _DELIVERY_INTENT):
+        delivery = "Cash on delivery is available." if cod else "Cash on delivery is not available."
+        contact = []
+        if contact_phone:
+            contact.append(f"Phone: {contact_phone}")
+        if contact_email:
+            contact.append(f"Email: {contact_email}")
+        contact_text = f" Contact us if you have questions. {' '.join(contact)}" if contact else ""
+        return f"{delivery}{contact_text}", 0.0, False, []
+    if _matches_intent(message, _APPOINTMENT_INTENT):
+        return (
+            "You can book an appointment on the appointments page. "
+            "Please share the visit type and a preferred date/time (e.g., 2025-02-12 15:30).",
+            0.0,
+            False,
+            [],
+        )
+    if _matches_intent(message, _AVAILABILITY_INTENT) and not _has_subject_token(message, _AVAILABILITY_INTENT):
+        return "Which medicine are you asking about? Please share the name (and dosage, if possible).", 0.0, False, []
+    if _matches_intent(message, _AVAILABILITY_INTENT):
+        matches = _find_medicine_matches(db, pharmacy_id, message, limit=3)
+        if matches:
+            lines = "\n".join(f"- {_summarize_medicine(med)}" for med in matches)
+            return f"Here is what I found:\n{lines}", 0.0, False, []
+        fuzzy = _find_fuzzy_medicine_matches(db, pharmacy_id, message, limit=3)
+        if fuzzy:
+            suggestions = "\n".join(f"- {med.name}" for med in fuzzy if med.name)
+            return f"I could not find an exact match. Did you mean:\n{suggestions}", 0.0, False, []
+        return "I could not find that medicine in this pharmacy. Please confirm the exact name and dosage.", 0.0, False, []
 
     inventory_chunks = _retrieve_inventory(db, pharmacy_id, retrieval_query, top_k=inventory_top_k)
     chunks = inventory_chunks + await retrieve(db, pharmacy_id, retrieval_query, top_k=top_k)
@@ -635,7 +1034,7 @@ async def answer(db: Session, pharmacy_id: int, customer_id: str, message: str) 
     escalated = _risk_escalate(message) or weak_retrieval
 
     provider = get_ai_provider()
-    sources_max_chars = int(os.getenv("RAG_SOURCES_MAX_CHARS", "6000"))
+    sources_max_chars = int(cfg.sources_max_chars)
     sources_parts: list[str] = []
     total = 0
     for c in chunks:
@@ -653,10 +1052,10 @@ async def answer(db: Session, pharmacy_id: int, customer_id: str, message: str) 
         "Conversation context may be provided to help resolve references, but it is NOT a source of facts.\n"
         "If the SOURCES do not contain enough information to answer, respond with exactly: I don't know.\n"
         "Return valid JSON with keys: answer (string), citations (array).\n"
-        "Each citation must reference a SOURCE chunk_id and include: doc_id, chunk_id, snippet.\n"
+        "Each citation must reference a SOURCE chunk_id and include: source_type, title, doc_id, chunk_id, preview, last_updated_at, score.\n"
     )
     convo = ""
-    if recent_questions and (is_follow_up or is_greeting):
+    if recent_questions and is_follow_up:
         recent_lines = "\n".join(f"- {q}" for q in list(reversed(recent_questions[:3])) if q)
         convo = f"\n\nConversation context (NOT a source):\n{recent_lines}"
     user = f"Customer question:\n{message}{convo}\n\nSOURCES:\n{sources}\n\nReturn only JSON."
