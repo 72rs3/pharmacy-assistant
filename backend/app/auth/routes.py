@@ -5,10 +5,17 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app import crud, models, schemas as app_schemas
-from app.auth.deps import get_current_user
+from app.auth.deps import get_current_user, require_admin
 from app.auth import schemas, utils
 
 router = APIRouter()
+
+def _validate_new_password(new_password: str) -> None:
+    if len((new_password or "").strip()) < 8:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password must be at least 8 characters",
+        )
 
 
 def _create_user(user_in: schemas.UserCreate, db: Session) -> models.User:
@@ -92,3 +99,37 @@ def login(user_in: schemas.UserLogin, db: Session = Depends(get_db)):
 @router.get("/me", response_model=schemas.UserOut)
 def me(current_user: models.User = Depends(get_current_user)):
     return current_user
+
+
+@router.post("/change-password")
+def change_password(
+    payload: schemas.PasswordChangeIn,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _validate_new_password(payload.new_password)
+
+    user = db.query(models.User).filter(models.User.id == current_user.id).first()
+    if not user or not utils.verify_password(payload.current_password, user.hashed_password):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Incorrect current password")
+
+    user.hashed_password = utils.hash_password(payload.new_password)
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/admin/reset-password")
+def admin_reset_password(
+    payload: schemas.AdminPasswordResetIn,
+    _: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    _validate_new_password(payload.new_password)
+
+    user = db.query(models.User).filter(models.User.email == payload.email).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    user.hashed_password = utils.hash_password(payload.new_password)
+    db.commit()
+    return {"ok": True}

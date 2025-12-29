@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app import models
 from app.auth.deps import require_admin, require_owner
 from app.deps import get_active_public_pharmacy
+from app.ai import rag_service
 from .. import crud, schemas
 from ..db import get_db
 
@@ -61,4 +62,8 @@ def approve_pharmacy(
     db: Session = Depends(get_db),
     _=Depends(require_admin),
 ):
-    return crud.approve_pharmacy(db, pharmacy_id=pharmacy_id)
+    pharmacy = crud.approve_pharmacy(db, pharmacy_id=pharmacy_id)
+    rag_service.ensure_pharmacy_playbook(db, pharmacy.id)
+    db.commit()
+    db.refresh(pharmacy)
+    return pharmacy

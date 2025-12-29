@@ -18,6 +18,8 @@ export default function OwnerInventory() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [form, setForm] = useState(emptyForm);
+  const [isReindexing, setIsReindexing] = useState(false);
+  const [reindexStatus, setReindexStatus] = useState("");
 
   const pharmacyStatus = useMemo(() => {
     if (!pharmacy) return null;
@@ -75,6 +77,20 @@ export default function OwnerInventory() {
     }
   };
 
+  const reindexAi = async () => {
+    setError("");
+    setReindexStatus("");
+    setIsReindexing(true);
+    try {
+      const res = await api.post("/ai/rag/reindex");
+      setReindexStatus(`AI index updated (${res.data?.chunks ?? 0} chunks).`);
+    } catch (e) {
+      setError(e?.response?.data?.detail ?? "Failed to reindex AI");
+    } finally {
+      setIsReindexing(false);
+    }
+  };
+
   return (
     <div className="container">
       <h1 className="page-title">Inventory</h1>
@@ -94,10 +110,17 @@ export default function OwnerInventory() {
                 <h2 className="card-title">Pharmacy</h2>
                 <p className="card-description">Your tenant status and public availability.</p>
               </div>
-              <button type="button" className="btn btn-ghost" onClick={load} disabled={isLoading}>
-                {isLoading ? "Refreshing..." : "Refresh"}
-              </button>
+              <div className="inline" style={{ gap: "0.5rem" }}>
+                <button type="button" className="btn btn-ghost" onClick={reindexAi} disabled={isReindexing}>
+                  {isReindexing ? "Reindexing..." : "Reindex AI"}
+                </button>
+                <button type="button" className="btn btn-ghost" onClick={load} disabled={isLoading}>
+                  {isLoading ? "Refreshing..." : "Refresh"}
+                </button>
+              </div>
             </header>
+
+            {reindexStatus ? <div className="alert">{reindexStatus}</div> : null}
 
             {pharmacy ? (
               <div className="grid" style={{ gap: "0.75rem" }}>
@@ -122,6 +145,7 @@ export default function OwnerInventory() {
                 {!pharmacyStatus?.approved ? (
                   <div className="alert">Customers cannot see this pharmacy until an admin approves it.</div>
                 ) : null}
+                <p className="help">Run “Reindex AI” after you add or update medicines.</p>
               </div>
             ) : (
               <p className="help">Loading pharmacy details...</p>
@@ -264,9 +288,9 @@ export default function OwnerInventory() {
                       {medicine.name} <span className="help">$ {medicine.price}</span>
                     </p>
                     <p className="list-item-meta">
-                      {medicine.category ? `Category: ${medicine.category} · ` : ""}
+                      {medicine.category ? `Category: ${medicine.category} • ` : ""}
                       {medicine.prescription_required ? "Prescription required" : "OTC"}
-                      {" · "}
+                      {" • "}
                       Stock: {medicine.stock_level}
                     </p>
                   </div>
@@ -282,4 +306,3 @@ export default function OwnerInventory() {
     </div>
   );
 }
-

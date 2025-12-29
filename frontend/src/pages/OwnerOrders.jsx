@@ -97,13 +97,20 @@ export default function OwnerOrders() {
                   <span className="badge">Total: ${totals[order.id]?.toFixed(2) ?? "0.00"}</span>
                 </div>
 
+                <div className="grid" style={{ gap: "0.25rem" }}>
+                  {order.customer_name ? <p className="help"><strong>Customer:</strong> {order.customer_name}</p> : null}
+                  {order.customer_phone ? <p className="help"><strong>Phone:</strong> {order.customer_phone}</p> : null}
+                  {order.customer_address ? <p className="help"><strong>Address:</strong> {order.customer_address}</p> : null}
+                  {order.customer_notes ? <p className="help"><strong>Notes:</strong> {order.customer_notes}</p> : null}
+                </div>
+
                 {(order.items ?? []).length > 0 ? (
                   <ul className="list compact">
                     {order.items.map((item) => (
                       <li key={item.id} className="list-item compact">
                         <div>
                           <p className="list-item-title">Medicine #{item.medicine_id}</p>
-                          <p className="list-item-meta">Qty {item.quantity} · ${item.unit_price.toFixed(2)} each</p>
+                          <p className="list-item-meta">Qty {item.quantity} • ${item.unit_price.toFixed(2)} each</p>
                         </div>
                       </li>
                     ))}
@@ -123,6 +130,14 @@ export default function OwnerOrders() {
                   </button>
                   <button
                     type="button"
+                    className="btn btn-ghost"
+                    onClick={() => handleAction(order.id, "deliver")}
+                    disabled={order.status !== "APPROVED"}
+                  >
+                    Mark delivered
+                  </button>
+                  <button
+                    type="button"
                     className="btn btn-danger"
                     onClick={() => handleAction(order.id, "cancel")}
                     disabled={order.status === "CANCELLED"}
@@ -138,4 +153,3 @@ export default function OwnerOrders() {
     </div>
   );
 }
-

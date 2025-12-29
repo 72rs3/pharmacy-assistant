@@ -189,6 +189,19 @@ def approve_order(
                 detail=f"Insufficient stock for {medicine.name}",
             )
 
+    prescription_needed = any(medicine_by_id[item.medicine_id].prescription_required for item in order_items)
+    if prescription_needed:
+        approved_prescription = (
+            db.query(models.Prescription)
+            .filter(models.Prescription.order_id == order.id, models.Prescription.status == "APPROVED")
+            .first()
+        )
+        if not approved_prescription:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Prescription required and not approved",
+            )
+
     for item in order_items:
         medicine = medicine_by_id[item.medicine_id]
         medicine.stock_level -= item.quantity
@@ -219,6 +232,30 @@ def cancel_order(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Delivered orders cannot be cancelled")
 
     order.status = "CANCELLED"
+    db.commit()
+    db.refresh(order)
+    return order
+
+
+@router.post("/{order_id}/deliver", response_model=schemas.Order)
+def deliver_order(
+    order_id: int,
+    db: Session = Depends(get_db),
+    pharmacy_id: int = Depends(get_current_pharmacy_id),
+    _=Depends(require_pharmacy_owner),
+):
+    order = (
+        db.query(models.Order)
+        .filter(models.Order.id == order_id, models.Order.pharmacy_id == pharmacy_id)
+        .first()
+    )
+    if not order:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
+    if order.status != "APPROVED":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only approved orders can be delivered")
+
+    order.status = "DELIVERED"
+    order.payment_status = "PAID" if order.payment_method == "COD" else order.payment_status
     db.commit()
     db.refresh(order)
     return order

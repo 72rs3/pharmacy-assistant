@@ -23,3 +23,6 @@ backend/venv/
 share.html
 ts and tenant deps*
 
+# Local documentation (keep untracked)
+docs/
+
