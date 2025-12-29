@@ -8,8 +8,18 @@ import { isValidEmail } from "../utils/validation";
 export default function Login() {
   const { login } = useAuth();
   const navigate = useNavigate();
+  const { login } = useAuth();
+  const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  if (!isPortalHost()) {
+    return <Navigate to="/" replace />;
+  }
+
+  const handleSubmit = async (event) => {
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -88,3 +98,4 @@ export default function Login() {
     </form>
   );
 }
+

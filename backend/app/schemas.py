@@ -217,6 +217,10 @@ class OrderBase(BaseModel):
     customer_phone: str | None = None
     customer_address: str | None = None
     customer_notes: str | None = None
+    customer_name: str | None = None
+    customer_phone: str | None = None
+    customer_address: str | None = None
+    customer_notes: str | None = None
     status: str = "PENDING"
     payment_method: str = "COD"
     payment_status: str = "UNPAID"
@@ -231,6 +235,7 @@ class OrderCreate(OrderBase):
 class Order(OrderBase):
     id: int
     pharmacy_id: int
+    order_date: datetime | None = None
     order_date: datetime | None = None
     items: List[OrderItem] = []
 
@@ -322,6 +327,8 @@ class Prescription(PrescriptionBase):
     reviewer_id: Optional[int] = None
     original_filename: Optional[str] = None
     content_type: Optional[str] = None
+    original_filename: Optional[str] = None
+    content_type: Optional[str] = None
     medicines: List[PrescriptionMedicine] = []
     upload_date: datetime | None = None
 
@@ -355,6 +362,14 @@ class AppointmentStatusIn(BaseModel):
     status: str  # PENDING / CONFIRMED / CANCELLED / COMPLETED
 
 
+class PrescriptionReviewIn(BaseModel):
+    status: str  # APPROVED / REJECTED
+
+
+class AppointmentStatusIn(BaseModel):
+    status: str  # PENDING / CONFIRMED / CANCELLED / COMPLETED
+
+
 # --------------------
 # Appointments
 # --------------------
@@ -366,6 +381,7 @@ class AppointmentBase(BaseModel):
     customer_phone: str | None = None
     customer_email: str | None = None
     type: str
+    scheduled_time: datetime
     scheduled_time: datetime
     status: str = "PENDING"
     vaccine_name: Optional[str] = None
@@ -475,10 +491,15 @@ class AppointmentReminder(BaseModel):
 
 class AIInteractionBase(BaseModel):
     customer_id: str | None = None
+    customer_id: str | None = None
     customer_query: str
     ai_response: str
     confidence_score: float
     escalated_to_human: bool = False
+    created_at: datetime | None = None
+    owner_reply: str | None = None
+    owner_replied_at: datetime | None = None
+    owner_id: int | None = None
     created_at: datetime | None = None
     owner_reply: str | None = None
     owner_replied_at: datetime | None = None

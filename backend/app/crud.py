@@ -2,7 +2,19 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, status
 
+from fastapi import HTTPException, status
+
 from . import models, schemas
+
+
+def _ensure_pharmacy_exists(db: Session, pharmacy_id: int) -> None:
+    exists = db.query(models.Pharmacy.id).filter(models.Pharmacy.id == pharmacy_id).first()
+    if not exists:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid pharmacy_id",
+        )
+
 
 
 def _ensure_pharmacy_exists(db: Session, pharmacy_id: int) -> None:
@@ -16,6 +28,10 @@ def _ensure_pharmacy_exists(db: Session, pharmacy_id: int) -> None:
 
 # Pharmacy CRUD
 def create_pharmacy(db: Session, pharmacy: schemas.PharmacyCreate):
+    data = pharmacy.dict()
+    data["status"] = "PENDING"
+    data["is_active"] = False
+    db_pharmacy = models.Pharmacy(**data)
     data = pharmacy.dict()
     data["status"] = "PENDING"
     data["is_active"] = False
@@ -51,9 +67,35 @@ def approve_pharmacy(db: Session, pharmacy_id: int):
     db.refresh(pharmacy)
     return pharmacy
 
+def get_pharmacies(db: Session, active_only: bool = False, status: str | None = None):
+    query = db.query(models.Pharmacy)
+    if active_only:
+        query = query.filter(
+            models.Pharmacy.is_active.is_(True),
+            models.Pharmacy.status == "APPROVED",
+        )
+    if status:
+        query = query.filter(models.Pharmacy.status == status)
+    return query.all()
+
+
+def approve_pharmacy(db: Session, pharmacy_id: int):
+    pharmacy = db.query(models.Pharmacy).filter(models.Pharmacy.id == pharmacy_id).first()
+    if not pharmacy:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Pharmacy not found",
+        )
+    pharmacy.status = "APPROVED"
+    pharmacy.is_active = True
+    db.commit()
+    db.refresh(pharmacy)
+    return pharmacy
+
 
 # Medicine CRUD
 def create_medicine(db: Session, medicine: schemas.MedicineCreate):
+    _ensure_pharmacy_exists(db, medicine.pharmacy_id)
     _ensure_pharmacy_exists(db, medicine.pharmacy_id)
     db_medicine = models.Medicine(**medicine.dict())
     db.add(db_medicine)

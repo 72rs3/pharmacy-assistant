@@ -1,12 +1,17 @@
 import os
 from contextlib import asynccontextmanager
 
+import os
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import inspect
 from sqlalchemy import inspect
 
 from app.db import Base, engine, ensure_sqlite_schema, SessionLocal
 from app import models
+from app.ai.provider_factory import get_ai_provider
 from app.ai.provider_factory import get_ai_provider
 from app.auth.routes import router as auth_router
 from app.auth.bootstrap import ensure_admin_user
@@ -119,8 +124,18 @@ cors_origin_regex = os.getenv("CORS_ALLOW_ORIGIN_REGEX") or r"^https?://([a-z0-9
 # `.env` files often double-escape backslashes (e.g. `\\d` instead of `\d`); normalize so CORS preflight works.
 cors_origin_regex = cors_origin_regex.replace("\\\\", "\\")
 
+cors_origins = _split_csv(os.getenv("CORS_ORIGINS")) or [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+cors_origin_regex = os.getenv("CORS_ALLOW_ORIGIN_REGEX") or r"^https?://([a-z0-9-]+\.)*localhost(:\d+)?$"
+# `.env` files often double-escape backslashes (e.g. `\\d` instead of `\d`); normalize so CORS preflight works.
+cors_origin_regex = cors_origin_regex.replace("\\\\", "\\")
+
 app.add_middleware(
     CORSMiddleware,
+    allow_origins=cors_origins,
+    allow_origin_regex=cors_origin_regex,
     allow_origins=cors_origins,
     allow_origin_regex=cors_origin_regex,
     allow_credentials=True,

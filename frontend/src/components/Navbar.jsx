@@ -3,6 +3,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { useTenant } from "../context/TenantContext";
 import { isPortalHost } from "../utils/tenant";
+import { useTenant } from "../context/TenantContext";
+import { isPortalHost } from "../utils/tenant";
 
 export default function Navbar() {
   const { token, user, logout, isAdmin, isOwner } = useAuth();

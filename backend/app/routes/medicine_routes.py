@@ -132,3 +132,14 @@ def list_medicines(
             detail="pharmacy_id mismatch with resolved tenant",
         )
     return crud.get_medicines(db, pharmacy_id=tenant_pharmacy_id)
+def list_medicines(
+    pharmacy_id: int | None = None,
+    tenant_pharmacy_id: int = Depends(get_active_public_pharmacy_id),
+    db: Session = Depends(get_db),
+):
+    if pharmacy_id is not None and pharmacy_id != tenant_pharmacy_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="pharmacy_id mismatch with resolved tenant",
+        )
+    return crud.get_medicines(db, pharmacy_id=tenant_pharmacy_id)
