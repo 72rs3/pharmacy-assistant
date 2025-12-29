@@ -1,0 +1,16 @@
+fastapi==0.120.0
+uvicorn==0.38.0
+SQLAlchemy==2.0.44
+alembic==1.14.0
+psycopg[binary]==3.2.9
+python-dotenv==1.0.1
+
+# Auth
+python-jose[cryptography]
+bcrypt==5.0.0
+email-validator
+python-multipart==0.0.21
+
+# Tests
+pytest==9.0.2
+httpx==0.28.1

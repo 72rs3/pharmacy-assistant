@@ -9,6 +9,7 @@ class UserBase(BaseModel):
 class UserCreate(UserBase):
     password: str
     pharmacy_name: str | None = None  # owners can supply a new pharmacy name
+    pharmacy_domain: str | None = None
 
 
 class UserLogin(BaseModel):
@@ -31,3 +32,13 @@ class Token(BaseModel):
 
 class TokenData(BaseModel):
     user_id: int | None = None
+
+
+class PasswordChangeIn(BaseModel):
+    current_password: str
+    new_password: str
+
+
+class AdminPasswordResetIn(BaseModel):
+    email: EmailStr
+    new_password: str

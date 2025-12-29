@@ -1,0 +1,28 @@
+# Python bytecode / caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+backend/venv/
+
+# Local databases / artifacts
+*.db
+*.sqlite
+*.sqlite3
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Local exports / notes
+share.html
+ts and tenant deps*
+
+# Local documentation (keep untracked)
+docs/
+

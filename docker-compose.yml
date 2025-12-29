@@ -1,0 +1,96 @@
+name: pharmacy-assistant
+
+services:
+  db:
+    # pgvector enabled image (required for real RAG)
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-pharmacy}
+      POSTGRES_USER: ${POSTGRES_USER:-pharmacy}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pharmacy}
+    ports:
+      - "${POSTGRES_PORT:-15432}:5432"
+    volumes:
+      - pharmacy_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  pgadmin:
+    profiles: ["tools"]
+    image: dpage/pgadmin4:8
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@local}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-admin}
+    ports:
+      - "${PGADMIN_PORT:-5050}:80"
+    depends_on:
+      - db
+
+  backend:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-pharmacy}:${POSTGRES_PASSWORD:-pharmacy}@db:5432/${POSTGRES_DB:-pharmacy}
+      DB_AUTO_CREATE: ${DB_AUTO_CREATE:-0}
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-change-me}
+      PHARMACY_ADMIN_EMAIL: ${PHARMACY_ADMIN_EMAIL:-}
+      PHARMACY_ADMIN_PASSWORD: ${PHARMACY_ADMIN_PASSWORD:-}
+      PHARMACY_ADMIN_FULL_NAME: ${PHARMACY_ADMIN_FULL_NAME:-Admin}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+      CORS_ALLOW_ORIGIN_REGEX: ${CORS_ALLOW_ORIGIN_REGEX:-^https?://([a-z0-9-]+\.)*localhost(:\d+)?$}
+      # AI / RAG
+      AI_PROVIDER: ${AI_PROVIDER:-openrouter}
+      # OpenRouter (OpenAI-compatible)
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+      OPENROUTER_CHAT_MODEL: ${OPENROUTER_CHAT_MODEL:-deepseek/deepseek-r1-0528:free}
+      OPENROUTER_EMBED_MODEL: ${OPENROUTER_EMBED_MODEL:-text-embedding-3-small}
+      OPENROUTER_EMBED_DIM: ${OPENROUTER_EMBED_DIM:-1536}
+      OPENROUTER_TEMPERATURE: ${OPENROUTER_TEMPERATURE:-0.2}
+      OPENROUTER_TIMEOUT_S: ${OPENROUTER_TIMEOUT_S:-60}
+      OPENROUTER_MAX_TOKENS: ${OPENROUTER_MAX_TOKENS:-400}
+      OPENROUTER_HTTP_REFERER: ${OPENROUTER_HTTP_REFERER:-}
+      OPENROUTER_X_TITLE: ${OPENROUTER_X_TITLE:-}
+      RAG_TOP_K: ${RAG_TOP_K:-6}
+      RAG_MIN_SCORE: ${RAG_MIN_SCORE:-0.35}
+      RAG_MIN_SCORE_SHORT: ${RAG_MIN_SCORE_SHORT:-0.15}
+      RAG_RETRIEVAL_MODE: ${RAG_RETRIEVAL_MODE:-vector}
+      RAG_EMBEDDINGS_ENABLED: ${RAG_EMBEDDINGS_ENABLED:-1}
+      RAG_SOURCES_MAX_CHARS: ${RAG_SOURCES_MAX_CHARS:-6000}
+    ports:
+      - "${BACKEND_PORT:-9000}:9000"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./backend/app:/app/app
+      - ./backend/main.py:/app/main.py
+      - ./backend/alembic:/app/alembic
+      - ./backend/alembic.ini:/app/alembic.ini
+
+  frontend:
+    build:
+      context: ./frontend
+    restart: unless-stopped
+    environment:
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:9000}
+      VITE_PORTAL_HOSTS: ${VITE_PORTAL_HOSTS:-localhost,127.0.0.1,::1}
+    ports:
+      - "${FRONTEND_PORT:-5173}:5173"
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+      - ./frontend/index.html:/app/index.html
+      - ./frontend/vite.config.js:/app/vite.config.js
+      - ./frontend/eslint.config.js:/app/eslint.config.js
+
+volumes:
+  pharmacy_pgdata:
