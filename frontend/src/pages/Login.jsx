@@ -1,10 +1,13 @@
 import { useState } from "react";
-import { Navigate, useNavigate } from "react-router-dom";
+import { Link, Navigate, useNavigate } from "react-router-dom";
 import api from "../api/axios";
 import { useAuth } from "../context/AuthContext";
 import { isPortalHost } from "../utils/tenant";
+import { isValidEmail } from "../utils/validation";
 
 export default function Login() {
+  const { login } = useAuth();
+  const navigate = useNavigate();
   const { login } = useAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
@@ -17,8 +20,20 @@ export default function Login() {
   }
 
   const handleSubmit = async (event) => {
+  const [error, setError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  if (!isPortalHost()) {
+    return <Navigate to="/" replace />;
+  }
+
+  const handleSubmit = async (event) => {
     event.preventDefault();
     setError("");
+    if (!isValidEmail(email)) {
+      setError("Enter a valid email address.");
+      return;
+    }
     setIsSubmitting(true);
 
     try {
@@ -33,54 +48,54 @@ export default function Login() {
   };
 
   return (
-    <div className="container">
-      <div className="narrow">
-        <h1 className="page-title">Portal login</h1>
-        <p className="page-subtitle">Sign in as a pharmacy owner or admin.</p>
+    <form className="portal-auth-form" onSubmit={handleSubmit}>
+      {error ? <div className="portal-auth-error">{error}</div> : null}
 
-        <div className="card" style={{ marginTop: "1.25rem" }}>
-          <form className="form" onSubmit={handleSubmit}>
-            {error ? <div className="alert alert-danger">{error}</div> : null}
-
-            <div className="form-row">
-              <label className="label" htmlFor="email">
-                Email
-              </label>
-              <input
-                id="email"
-                className="input"
-                type="email"
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-                required
-                autoComplete="email"
-              />
-            </div>
-
-            <div className="form-row">
-              <label className="label" htmlFor="password">
-                Password
-              </label>
-              <input
-                id="password"
-                className="input"
-                type="password"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                required
-                autoComplete="current-password"
-              />
-            </div>
-
-            <div className="actions">
-              <button className="btn btn-primary" type="submit" disabled={isSubmitting}>
-                {isSubmitting ? "Signing in..." : "Login"}
-              </button>
-            </div>
-          </form>
-        </div>
+      <div className="portal-auth-field">
+        <label className="portal-auth-label" htmlFor="email">
+          Email Address
+        </label>
+        <input
+          id="email"
+          className="portal-auth-input"
+          type="email"
+          value={email}
+          onChange={(event) => setEmail(event.target.value)}
+          required
+          autoComplete="email"
+          autoFocus
+          placeholder="Email Address"
+        />
       </div>
-    </div>
+
+      <div className="portal-auth-field">
+        <label className="portal-auth-label" htmlFor="password">
+          Password
+        </label>
+        <input
+          id="password"
+          className="portal-auth-input"
+          type="password"
+          value={password}
+          onChange={(event) => setPassword(event.target.value)}
+          required
+          autoComplete="current-password"
+          placeholder="Password"
+        />
+      </div>
+
+      <button className="portal-auth-button" type="submit" disabled={isSubmitting}>
+        {isSubmitting ? "Signing in..." : "Login"}
+      </button>
+
+      <p className="portal-auth-footer">
+        Need an account?{" "}
+        <Link className="portal-auth-link" to="/portal/register">
+          Create Account
+        </Link>
+        .
+      </p>
+    </form>
   );
 }
 

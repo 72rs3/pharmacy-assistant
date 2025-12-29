@@ -1,7 +1,11 @@
 import os
 from pathlib import Path
 
+import os
+from pathlib import Path
+
 from sqlalchemy import create_engine
+from sqlalchemy.engine import Engine
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 
@@ -15,9 +19,20 @@ DATABASE_URL = os.getenv("DATABASE_URL", DEFAULT_DATABASE_URL)
 
 def _is_sqlite_url(url: str) -> bool:
     return url.startswith("sqlite:")
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+DEFAULT_SQLITE_PATH = (BACKEND_DIR / "pharmacy.db").resolve()
+DEFAULT_DATABASE_URL = f"sqlite:///{DEFAULT_SQLITE_PATH.as_posix()}"
+
+# Prefer an explicit DATABASE_URL (Postgres in prod, SQLite for quick local dev).
+DATABASE_URL = os.getenv("DATABASE_URL", DEFAULT_DATABASE_URL)
+
+
+def _is_sqlite_url(url: str) -> bool:
+    return url.startswith("sqlite:")
 
 engine = create_engine(
     DATABASE_URL,
+    connect_args={"check_same_thread": False} if _is_sqlite_url(DATABASE_URL) else {},
     connect_args={"check_same_thread": False} if _is_sqlite_url(DATABASE_URL) else {},
 )
 
@@ -72,6 +87,17 @@ def ensure_sqlite_schema(db_engine: Engine) -> None:
             add_column_if_missing("pharmacies", "branding_details", "branding_details TEXT")
             add_column_if_missing("pharmacies", "operating_hours", "operating_hours VARCHAR")
             add_column_if_missing("pharmacies", "support_cod", "support_cod INTEGER NOT NULL DEFAULT 1")
+            add_column_if_missing("pharmacies", "logo_url", "logo_url VARCHAR")
+            add_column_if_missing("pharmacies", "hero_image_url", "hero_image_url VARCHAR")
+            add_column_if_missing("pharmacies", "primary_color", "primary_color VARCHAR")
+            add_column_if_missing("pharmacies", "primary_color_600", "primary_color_600 VARCHAR")
+            add_column_if_missing("pharmacies", "accent_color", "accent_color VARCHAR")
+            add_column_if_missing("pharmacies", "font_family", "font_family VARCHAR")
+            add_column_if_missing("pharmacies", "theme_preset", "theme_preset VARCHAR")
+            add_column_if_missing("pharmacies", "storefront_layout", "storefront_layout VARCHAR")
+            add_column_if_missing("pharmacies", "contact_email", "contact_email VARCHAR")
+            add_column_if_missing("pharmacies", "contact_phone", "contact_phone VARCHAR")
+            add_column_if_missing("pharmacies", "contact_address", "contact_address TEXT")
             add_column_if_missing("pharmacies", "domain", "domain VARCHAR")
             add_column_if_missing("pharmacies", "is_active", "is_active INTEGER NOT NULL DEFAULT 1")
 
@@ -85,6 +111,7 @@ def ensure_sqlite_schema(db_engine: Engine) -> None:
         if "medicines" in tables:
             add_column_if_missing("medicines", "category", "category VARCHAR")
             add_column_if_missing("medicines", "stock_level", "stock_level INTEGER NOT NULL DEFAULT 0")
+            add_column_if_missing("medicines", "expiry_date", "expiry_date DATE")
             add_column_if_missing(
                 "medicines",
                 "prescription_required",
@@ -108,10 +135,18 @@ def ensure_sqlite_schema(db_engine: Engine) -> None:
         if "prescriptions" in tables:
             add_column_if_missing("prescriptions", "original_filename", "original_filename VARCHAR")
             add_column_if_missing("prescriptions", "content_type", "content_type VARCHAR")
+            add_column_if_missing("prescriptions", "draft_token", "draft_token VARCHAR")
+            add_column_if_missing("prescriptions", "pharmacy_id", "pharmacy_id INTEGER")
 
         if "appointments" in tables:
             add_column_if_missing("appointments", "customer_name", "customer_name VARCHAR")
             add_column_if_missing("appointments", "customer_phone", "customer_phone VARCHAR")
+            add_column_if_missing("appointments", "customer_email", "customer_email VARCHAR")
+            add_column_if_missing("appointments", "status", "status VARCHAR")
+            add_column_if_missing("appointments", "created_at", "created_at DATETIME")
+            add_column_if_missing("appointments", "updated_at", "updated_at DATETIME")
+            add_column_if_missing("appointments", "no_show", "no_show INTEGER NOT NULL DEFAULT 0")
+            add_column_if_missing("appointments", "no_show_marked_at", "no_show_marked_at DATETIME")
 
         if "ai_interactions" in tables:
             add_column_if_missing("ai_interactions", "customer_id", "customer_id VARCHAR")

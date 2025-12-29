@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app import models
 from app.auth.utils import ALGORITHM, SECRET_KEY
-from app.deps import get_current_pharmacy_id
+from app.deps import get_current_pharmacy
 from app.db import get_db
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
@@ -48,13 +48,39 @@ def require_owner(current_user: models.User = Depends(get_current_user)) -> mode
     return current_user
 
 
-def require_pharmacy_owner(
-    pharmacy_id: int = Depends(get_current_pharmacy_id),
+def require_approved_owner(
+    db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ) -> models.User:
     if current_user.is_admin:
         return current_user
-    if current_user.pharmacy_id != pharmacy_id:
+    if current_user.pharmacy_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Pharmacy owner privileges required",
+        )
+
+    pharmacy = db.query(models.Pharmacy).filter(models.Pharmacy.id == current_user.pharmacy_id).first()
+    if pharmacy is None or not pharmacy.is_active or pharmacy.status != "APPROVED":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Pharmacy is not approved yet",
+        )
+    return current_user
+
+
+def require_pharmacy_owner(
+    pharmacy: models.Pharmacy = Depends(get_current_pharmacy),
+    current_user: models.User = Depends(get_current_user),
+) -> models.User:
+    if current_user.is_admin:
+        return current_user
+    if not pharmacy.is_active or pharmacy.status != "APPROVED":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Pharmacy is not approved yet",
+        )
+    if current_user.pharmacy_id != pharmacy.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Pharmacy owner privileges required",

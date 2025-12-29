@@ -1,8 +1,9 @@
-from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
 from datetime import datetime
 
 from app.db import Base
+from app.ai.types import Embedding
 from app.ai.types import Embedding
 
 
@@ -18,8 +19,23 @@ class Pharmacy(Base):
     operating_hours = Column(String, nullable=True)
     support_cod = Column(Boolean, default=True, nullable=False)
 
+    # Theme / branding tokens (per-tenant UI customization)
+    logo_url = Column(String, nullable=True)
+    hero_image_url = Column(String, nullable=True)
+    primary_color = Column(String, nullable=True)  # hex, e.g. #7CB342
+    primary_color_600 = Column(String, nullable=True)  # hex, e.g. #689F38
+    accent_color = Column(String, nullable=True)  # hex, e.g. #3b82f6
+    font_family = Column(String, nullable=True)
+    theme_preset = Column(String, nullable=True)
+    storefront_layout = Column(String, nullable=True)
+    contact_email = Column(String, nullable=True)
+    contact_phone = Column(String, nullable=True)
+    contact_address = Column(Text, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
     # Implementation-specific fields
     domain = Column(String, unique=True, index=True, nullable=True)  # for future subdomains
+    is_active = Column(Boolean, default=False, nullable=False)
     is_active = Column(Boolean, default=False, nullable=False)
 
     owners = relationship("User", back_populates="pharmacy")
@@ -62,6 +78,11 @@ class User(Base):
         back_populates="owner",
         foreign_keys="AIInteraction.owner_id",
     )
+    handled_ai_interactions = relationship(
+        "AIInteraction",
+        back_populates="owner",
+        foreign_keys="AIInteraction.owner_id",
+    )
 
 
 class Medicine(Base):
@@ -72,9 +93,11 @@ class Medicine(Base):
     category = Column(String, index=True, nullable=True)
     price = Column(Float, nullable=False)
     stock_level = Column(Integer, nullable=False, default=0)
+    expiry_date = Column(Date, nullable=True)
     prescription_required = Column(Boolean, default=False, nullable=False)
     dosage = Column(String, nullable=True)
     side_effects = Column(Text, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     pharmacy_id = Column(Integer, ForeignKey("pharmacies.id"), nullable=False)
     pharmacy = relationship("Pharmacy", back_populates="medicines")
@@ -83,11 +106,31 @@ class Medicine(Base):
     prescription_medicines = relationship("PrescriptionMedicine", back_populates="medicine")
 
 
+class Product(Base):
+    __tablename__ = "products"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, index=True, nullable=False)
+    category = Column(String, index=True, nullable=True)
+    price = Column(Float, nullable=False)
+    stock_level = Column(Integer, nullable=False, default=0)
+    description = Column(Text, nullable=True)
+    image_url = Column(String, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    pharmacy_id = Column(Integer, ForeignKey("pharmacies.id"), nullable=False)
+    pharmacy = relationship("Pharmacy")
+
+
 class Order(Base):
     __tablename__ = "orders"
 
     id = Column(Integer, primary_key=True, index=True)
     customer_id = Column(String, nullable=False)
+    customer_name = Column(String, nullable=True)
+    customer_phone = Column(String, nullable=True)
+    customer_address = Column(Text, nullable=True)
+    customer_notes = Column(Text, nullable=True)
     customer_name = Column(String, nullable=True)
     customer_phone = Column(String, nullable=True)
     customer_address = Column(Text, nullable=True)
@@ -115,8 +158,11 @@ class OrderItem(Base):
     order_id = Column(Integer, ForeignKey("orders.id"), nullable=False)
     order = relationship("Order", back_populates="items")
 
-    medicine_id = Column(Integer, ForeignKey("medicines.id"), nullable=False)
+    medicine_id = Column(Integer, ForeignKey("medicines.id"), nullable=True)
     medicine = relationship("Medicine", back_populates="order_items")
+
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=True)
+    product = relationship("Product")
 
 
 class Prescription(Base):
@@ -126,10 +172,18 @@ class Prescription(Base):
     file_path = Column(String, nullable=False)
     original_filename = Column(String, nullable=True)
     content_type = Column(String, nullable=True)
+    original_filename = Column(String, nullable=True)
+    content_type = Column(String, nullable=True)
     status = Column(String, nullable=False, default="PENDING")
     upload_date = Column(DateTime, default=datetime.utcnow, nullable=False)
 
-    order_id = Column(Integer, ForeignKey("orders.id"), nullable=False)
+    # Draft prescriptions are uploaded before the order is created and then attached later.
+    draft_token = Column(String, unique=True, index=True, nullable=True)
+
+    pharmacy_id = Column(Integer, ForeignKey("pharmacies.id"), nullable=False)
+    pharmacy = relationship("Pharmacy")
+
+    order_id = Column(Integer, ForeignKey("orders.id"), nullable=True)
     order = relationship("Order", back_populates="prescriptions")
 
     reviewer_id = Column(Integer, ForeignKey("users.id"), nullable=True)
@@ -160,19 +214,74 @@ class Appointment(Base):
     customer_id = Column(String, nullable=False)
     customer_name = Column(String, nullable=True)
     customer_phone = Column(String, nullable=True)
+    customer_email = Column(String, nullable=True)
     type = Column(String, nullable=False)
     scheduled_time = Column(DateTime, nullable=False)
     status = Column(String, nullable=False, default="PENDING")
     vaccine_name = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    no_show = Column(Boolean, default=False, nullable=False)
+    no_show_marked_at = Column(DateTime, nullable=True)
 
     pharmacy_id = Column(Integer, ForeignKey("pharmacies.id"), nullable=False)
     pharmacy = relationship("Pharmacy", back_populates="appointments")
+
+
+class AppointmentSettings(Base):
+    __tablename__ = "appointment_settings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    pharmacy_id = Column(Integer, ForeignKey("pharmacies.id"), nullable=False, unique=True)
+    slot_minutes = Column(Integer, nullable=False, default=15)
+    buffer_minutes = Column(Integer, nullable=False, default=0)
+    timezone = Column(String, nullable=False, default="UTC")
+    weekly_hours_json = Column(Text, nullable=False, default="{}")
+    no_show_minutes = Column(Integer, nullable=False, default=30)
+    locale = Column(String, nullable=False, default="en")
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    pharmacy = relationship("Pharmacy")
+
+
+class AppointmentAudit(Base):
+    __tablename__ = "appointment_audits"
+
+    id = Column(Integer, primary_key=True, index=True)
+    appointment_id = Column(Integer, ForeignKey("appointments.id"), nullable=False, index=True)
+    action = Column(String, nullable=False)
+    old_values_json = Column(Text, nullable=True)
+    new_values_json = Column(Text, nullable=True)
+    changed_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    appointment = relationship("Appointment")
+    changed_by = relationship("User")
+
+
+class AppointmentReminder(Base):
+    __tablename__ = "appointment_reminders"
+
+    id = Column(Integer, primary_key=True, index=True)
+    appointment_id = Column(Integer, ForeignKey("appointments.id"), nullable=False, index=True)
+    channel = Column(String, nullable=False, default="EMAIL")
+    template = Column(String, nullable=False, default="24h")
+    send_at = Column(DateTime, nullable=False)
+    sent_at = Column(DateTime, nullable=True)
+    status = Column(String, nullable=False, default="PENDING")
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    appointment = relationship("Appointment")
 
 
 class AIInteraction(Base):
     __tablename__ = "ai_interactions"
 
     id = Column(Integer, primary_key=True, index=True)
+    customer_id = Column(String, nullable=False, index=True)
     customer_id = Column(String, nullable=False, index=True)
     customer_query = Column(Text, nullable=False)
     ai_response = Column(Text, nullable=False)
@@ -182,9 +291,18 @@ class AIInteraction(Base):
     owner_reply = Column(Text, nullable=True)
     owner_replied_at = Column(DateTime, nullable=True)
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    owner_reply = Column(Text, nullable=True)
+    owner_replied_at = Column(DateTime, nullable=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=True)
 
     pharmacy_id = Column(Integer, ForeignKey("pharmacies.id"), nullable=False)
     pharmacy = relationship("Pharmacy", back_populates="ai_interactions")
+    owner = relationship(
+        "User",
+        back_populates="handled_ai_interactions",
+        foreign_keys=[owner_id],
+    )
     owner = relationship(
         "User",
         back_populates="handled_ai_interactions",
@@ -204,6 +322,17 @@ class AILog(Base):
     pharmacy = relationship("Pharmacy", back_populates="ai_logs")
 
 
+class ChatSession(Base):
+    __tablename__ = "chat_sessions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    pharmacy_id = Column(Integer, ForeignKey("pharmacies.id"), nullable=False, index=True)
+    session_id = Column(String, nullable=False, index=True)
+    turns_json = Column(Text, nullable=False, default="[]")
+    expires_at = Column(DateTime, nullable=False, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class Document(Base):
     __tablename__ = "documents"
 
@@ -212,6 +341,10 @@ class Document(Base):
     source_type = Column(String, nullable=False)  # medicine / pharmacy / faq / upload
     source_key = Column(String, nullable=True)  # e.g. medicine:{id}
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    data_updated_at = Column(DateTime, nullable=True)
+    indexed_at = Column(DateTime, nullable=True)
+    version = Column(Integer, default=1, nullable=False)
 
     pharmacy_id = Column(Integer, ForeignKey("pharmacies.id"), nullable=False, index=True)
 
@@ -228,6 +361,9 @@ class DocumentChunk(Base):
     # Default matches `text-embedding-3-small` output dimension.
     embedding = Column(Embedding(1536), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    indexed_at = Column(DateTime, nullable=True)
+    version = Column(Integer, default=1, nullable=False)
 
     pharmacy_id = Column(Integer, ForeignKey("pharmacies.id"), nullable=False, index=True)
 

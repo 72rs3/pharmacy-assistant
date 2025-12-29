@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import secrets
 import os
 from datetime import datetime
 
@@ -10,7 +9,14 @@ from sqlalchemy.orm import Session
 from app import models, schemas
 from app.ai.provider_factory import get_ai_provider
 from app.ai import rag_service
-from app.auth.deps import require_admin, require_owner
+from app.ai.intent import get_customer_chat_id
+from app.ai.safety import detect_risk, safe_response
+from app.ai import session_memory
+from app.ai.tri_model_router import route_intent
+from app.ai.tool_executor import build_tool_context
+from app.ai.generator import generate_answer
+from app.config.rag import get_rag_config
+from app.auth.deps import require_admin, require_approved_owner
 from app.db import get_db
 from app.deps import get_active_public_pharmacy_id
 
@@ -19,13 +25,83 @@ router = APIRouter(prefix="/ai", tags=["AI"])
 
 
 def _get_customer_chat_id(chat_id: str | None = Header(None, alias="X-Chat-ID")) -> str:
-    if chat_id and chat_id.strip():
-        return chat_id.strip()
-    return secrets.token_urlsafe(12)
+    return get_customer_chat_id(chat_id)
 
 
 def _log(db: Session, pharmacy_id: int, log_type: str, details: str) -> None:
     db.add(models.AILog(log_type=log_type, details=details, pharmacy_id=pharmacy_id))
+
+
+def _enforce_action_policy(tool_ctx: object, actions: list[schemas.AIAction]) -> list[schemas.AIAction]:
+    intent = str(getattr(tool_ctx, "intent", "") or "")
+    if intent != "MEDICINE_SEARCH":
+        return actions
+
+    med_id: int | None = None
+    rx: bool | None = None
+    stock: int | None = None
+
+    cards = getattr(tool_ctx, "cards", None) or []
+    if cards:
+        card = cards[0]
+        med_id = int(getattr(card, "medicine_id", 0) or 0) or None
+        rx = bool(getattr(card, "rx", False))
+        stock = int(getattr(card, "stock", 0) or 0)
+
+    items = getattr(tool_ctx, "items", None) or []
+    if items and isinstance(items[0], dict):
+        item = items[0]
+        med_id = med_id or (int(item.get("id") or 0) or None)
+        rx = bool(item.get("rx")) if rx is None else rx
+        stock = int(item.get("stock") or 0) if stock is None else stock
+
+    def action_med_id(action: schemas.AIAction) -> int | None:
+        if action.medicine_id:
+            return int(action.medicine_id)
+        payload = action.payload or {}
+        try:
+            return int(payload.get("medicine_id")) if payload.get("medicine_id") is not None else None
+        except Exception:
+            return None
+
+    def dedupe(vals: list[schemas.AIAction]) -> list[schemas.AIAction]:
+        seen: set[tuple[str, int | None]] = set()
+        out: list[schemas.AIAction] = []
+        for a in vals:
+            key = (str(a.type or ""), action_med_id(a))
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(a)
+        return out
+
+    if rx is True:
+        filtered = [a for a in actions if a.type != "add_to_cart"]
+        if not any(a.type == "upload_prescription" for a in filtered):
+            if med_id:
+                filtered.append(
+                    schemas.AIAction(
+                        type="upload_prescription",
+                        label="Upload prescription",
+                        medicine_id=med_id,
+                        payload={"medicine_id": med_id},
+                    )
+                )
+        return dedupe(filtered)
+
+    if stock is not None and stock <= 0:
+        return dedupe([a for a in actions if a.type != "add_to_cart"])
+
+    if med_id and stock is not None and stock > 0 and not any(a.type == "add_to_cart" for a in actions):
+        actions = actions + [
+            schemas.AIAction(
+                type="add_to_cart",
+                label="Add to cart",
+                medicine_id=med_id,
+                payload={"medicine_id": med_id, "quantity": 1},
+            )
+        ]
+    return dedupe(actions)
 
 
 @router.post("/chat", response_model=schemas.AIChatOut)
@@ -38,6 +114,7 @@ async def chat(
     message = (payload.message or "").strip()
     if not message:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Message is required")
+    session_id = (payload.session_id or "").strip() or session_memory.new_session_id()
 
     try:
         get_ai_provider()
@@ -48,54 +125,123 @@ async def chat(
         ) from exc
 
     try:
-        answer, confidence, escalated, chunks = await rag_service.answer(db, pharmacy_id, customer_id, message)
+        rag_service.ensure_pharmacy_playbook(db, pharmacy_id)
+        db.commit()
+        is_risky, reason = detect_risk(message)
+        if is_risky:
+            pharmacy = db.query(models.Pharmacy).filter(models.Pharmacy.id == pharmacy_id).first()
+            answer = safe_response(pharmacy, reason)
+            interaction = models.AIInteraction(
+                customer_id=customer_id,
+                customer_query=message,
+                ai_response=answer,
+                confidence_score=0.0,
+                escalated_to_human=True,
+                created_at=datetime.utcnow(),
+                pharmacy_id=pharmacy_id,
+            )
+            db.add(interaction)
+            db.commit()
+            db.refresh(interaction)
+            session_memory.append_turns(db, pharmacy_id, session_id, message, interaction.ai_response)
+            _log(db, pharmacy_id, "chat", f"chat_id={customer_id} confidence=0.00 escalated=True rag_top_k=0 retrieved_chunks=[]")
+            _log(db, pharmacy_id, "escalation", f"interaction_id={interaction.id} chat_id={customer_id}")
+            db.commit()
+            return schemas.AIChatOut(
+                interaction_id=interaction.id,
+                customer_id=customer_id,
+                session_id=session_id,
+                answer=interaction.ai_response,
+                citations=[],
+                cards=[],
+                actions=[],
+                quick_replies=[],
+                confidence_score=interaction.confidence_score,
+                escalated_to_human=interaction.escalated_to_human,
+                intent="RISKY_MEDICAL",
+                created_at=interaction.created_at,
+                data_last_updated_at=None,
+                indexed_at=None,
+            )
+        turns = session_memory.load_turns(db, pharmacy_id, session_id)
+        memory_context = session_memory.user_context(turns)
+        router = await route_intent(message, pharmacy_id=pharmacy_id, session_id=session_id)
+        tool_ctx, citations, actions, immediate_answer = await build_tool_context(
+            db,
+            pharmacy_id=pharmacy_id,
+            router=router,
+            session_id=session_id,
+            turns=turns,
+        )
+        gen = await generate_answer(
+            tool_context=tool_ctx,
+            user_message=message,
+            router_confidence=float(router.confidence or 0.0),
+        )
+        answer = (gen.answer or "").strip()
+        if immediate_answer and (not answer or answer.lower().startswith("assistant temporarily unavailable")):
+            answer = immediate_answer
+        elif not answer:
+            answer = immediate_answer or ""
+        # Keep existing action list from tools unless generator provided actions.
+        if gen.actions:
+            actions = [
+                schemas.AIAction(
+                    type=a.type,
+                    label=a.label,
+                    medicine_id=(int(a.payload.get("medicine_id")) if isinstance(a.payload, dict) and a.payload.get("medicine_id") else None),
+                    payload=a.payload,
+                )
+                for a in gen.actions
+            ]
+        actions = _enforce_action_policy(tool_ctx, actions or [])
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
-
-    citations = [
-        schemas.AICitation(
-            doc_id=int(c.document_id),
-            chunk_id=int(c.id),
-            snippet=((c.content or "").replace("\n", " ").strip()[:160]),
-        )
-        for c in chunks
-        if c.content
-    ]
 
     interaction = models.AIInteraction(
         customer_id=customer_id,
         customer_query=message,
         ai_response=answer,
-        confidence_score=float(confidence),
-        escalated_to_human=bool(escalated),
+        confidence_score=float(gen.confidence if gen.answer else 0.0),
+        escalated_to_human=bool(tool_ctx.escalated or gen.escalated),
         created_at=datetime.utcnow(),
         pharmacy_id=pharmacy_id,
     )
     db.add(interaction)
     db.flush()
-    chunk_log = ",".join(f"{c.id}:{c.score:.2f}" for c in chunks)
+    chunk_log = ",".join(f"{c.get('chunk_id',0)}:source" for c in (tool_ctx.citations or []))
+    action_log = ",".join(sorted({a.type for a in (actions or []) if a and a.type}))
     _log(
         db,
         pharmacy_id,
         "chat",
         (
-            f"chat_id={customer_id} confidence={confidence:.2f} escalated={bool(escalated)} "
-            f"rag_top_k={int(os.getenv('RAG_TOP_K','6'))} retrieved_chunks=[{chunk_log}]"
+            f"chat_id={customer_id} confidence={float(gen.confidence if gen.answer else 0.0):.2f} escalated={bool(tool_ctx.escalated or gen.escalated)} "
+            f"router_intent={router.intent} router_conf={router.confidence:.2f} "
+            f"rag_top_k={int(get_rag_config().top_k)} retrieved_chunks=[{chunk_log}] actions=[{action_log}]"
         ),
     )
     if interaction.escalated_to_human:
         _log(db, pharmacy_id, "escalation", f"interaction_id={interaction.id} chat_id={customer_id}")
     db.commit()
     db.refresh(interaction)
+    session_memory.append_turns(db, pharmacy_id, session_id, message, interaction.ai_response)
 
     return schemas.AIChatOut(
         interaction_id=interaction.id,
         customer_id=customer_id,
+        session_id=session_id,
         answer=interaction.ai_response,
-        citations=citations,
+        citations=[schemas.AICitation(**c) for c in (tool_ctx.citations or [])] if tool_ctx.citations else citations,
+        cards=(tool_ctx.cards or []),
+        actions=actions,
+        quick_replies=(gen.quick_replies or tool_ctx.quick_replies or []),
         confidence_score=interaction.confidence_score,
         escalated_to_human=interaction.escalated_to_human,
+        intent=tool_ctx.intent,
         created_at=interaction.created_at,
+        data_last_updated_at=tool_ctx.data_last_updated_at,
+        indexed_at=tool_ctx.indexed_at,
     )
 
 
@@ -115,7 +261,7 @@ def my_chat_history(
 
 @router.post("/rag/reindex")
 async def reindex_pharmacy(
-    current_user: models.User = Depends(require_owner),
+    current_user: models.User = Depends(require_approved_owner),
     db: Session = Depends(get_db),
 ):
     try:
@@ -137,7 +283,7 @@ async def reindex_pharmacy(
 
 @router.get("/escalations/owner", response_model=list[schemas.AIInteraction])
 def list_owner_escalations(
-    current_user: models.User = Depends(require_owner),
+    current_user: models.User = Depends(require_approved_owner),
     db: Session = Depends(get_db),
 ):
     return (
@@ -156,7 +302,7 @@ def list_owner_escalations(
 def reply_to_escalation(
     interaction_id: int,
     payload: schemas.AIEscalationReplyIn,
-    current_user: models.User = Depends(require_owner),
+    current_user: models.User = Depends(require_approved_owner),
     db: Session = Depends(get_db),
 ):
     reply = (payload.reply or "").strip()

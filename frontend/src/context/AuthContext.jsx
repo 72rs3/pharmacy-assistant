@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import api from "../api/axios";
 
@@ -5,6 +6,8 @@ const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
   const [token, setToken] = useState(() => localStorage.getItem("token"));
+  const [user, setUser] = useState(null);
+  const [isLoadingUser, setIsLoadingUser] = useState(false);
   const [user, setUser] = useState(null);
   const [isLoadingUser, setIsLoadingUser] = useState(false);
 
@@ -15,6 +18,7 @@ export function AuthProvider({ children }) {
 
   const logout = () => {
     setToken(null);
+    setUser(null);
     setUser(null);
     localStorage.removeItem("token");
     localStorage.removeItem("pharmacy_id");
@@ -66,7 +70,7 @@ export function AuthProvider({ children }) {
       user,
       isLoadingUser,
       isAdmin: Boolean(user?.is_admin),
-      isOwner: Boolean(user?.pharmacy_id) && !Boolean(user?.is_admin),
+      isOwner: Boolean(user?.pharmacy_id) && !user?.is_admin,
       login,
       logout,
     }),
@@ -74,6 +78,7 @@ export function AuthProvider({ children }) {
   );
 
   return (
+    <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
     <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
   );
 }
