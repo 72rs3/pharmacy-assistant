@@ -1,0 +1,12 @@
+fastapi==0.120.0
+uvicorn==0.38.0
+SQLAlchemy==2.0.44
+
+# Auth
+python-jose[cryptography]
+bcrypt==5.0.0
+email-validator
+
+# Tests
+pytest==9.0.2
+httpx==0.28.1

@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app import models
+from app import crud, models, schemas as app_schemas
 from app.auth import schemas, utils
 
 router = APIRouter()
@@ -17,9 +17,18 @@ def _create_user(user_in: schemas.UserCreate, db: Session) -> models.User:
 
     pharmacy = None
     if user_in.pharmacy_name:
-        pharmacy = models.Pharmacy(name=user_in.pharmacy_name)
-        db.add(pharmacy)
-        db.flush()  # ensure pharmacy.id is populated
+        existing_pharmacy = (
+            db.query(models.Pharmacy).filter(models.Pharmacy.name == user_in.pharmacy_name).first()
+        )
+        if existing_pharmacy:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Pharmacy name already registered",
+            )
+        pharmacy = crud.create_pharmacy(
+            db=db,
+            pharmacy=app_schemas.PharmacyCreate(name=user_in.pharmacy_name),
+        )
 
     hashed_pw = utils.hash_password(user_in.password)
     user = models.User(

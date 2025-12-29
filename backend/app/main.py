@@ -1,12 +1,15 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.db import Base, engine
+from app.db import Base, engine, ensure_sqlite_schema
 from app import models
 from app.auth.routes import router as auth_router
+from app.routes.pharmacy_routes import router as pharmacy_router
+from app.routes.medicine_routes import router as medicine_router
 
 # Create tables
 Base.metadata.create_all(bind=engine)
+ensure_sqlite_schema(engine)
 
 app = FastAPI(title="AI-Powered Pharmacy Assistant Backend")
 
@@ -20,6 +23,8 @@ app.add_middleware(
 )
 
 app.include_router(auth_router, prefix="/auth", tags=["Auth"])
+app.include_router(pharmacy_router)
+app.include_router(medicine_router)
 
 
 @app.get("/")

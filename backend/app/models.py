@@ -19,7 +19,7 @@ class Pharmacy(Base):
 
     # Implementation-specific fields
     domain = Column(String, unique=True, index=True, nullable=True)  # for future subdomains
-    is_active = Column(Boolean, default=True)
+    is_active = Column(Boolean, default=False, nullable=False)
 
     owners = relationship("User", back_populates="pharmacy")
     medicines = relationship("Medicine", back_populates="pharmacy")
