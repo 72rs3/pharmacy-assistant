@@ -24,6 +24,7 @@ export default function Appointments() {
   const [form, setForm] = useState({
     customer_name: "",
     customer_phone: "",
+    customer_email: "",
     type: appointmentTypes[0].value,
     scheduled_time: "",
     vaccine_name: "",
@@ -69,6 +70,7 @@ export default function Appointments() {
       const payload = {
         customer_name: form.customer_name.trim(),
         customer_phone: form.customer_phone.trim(),
+        customer_email: form.customer_email.trim() || null,
         type: form.type.trim(),
         scheduled_time: form.scheduled_time,
         vaccine_name: shouldShowVaccineName ? form.vaccine_name.trim() : null,
@@ -169,6 +171,20 @@ export default function Appointments() {
                 placeholder="Enter phone number"
               />
               {phoneError ? <div className="text-xs text-red-600 mt-1">{phoneError}</div> : null}
+            </div>
+            <div>
+              <label htmlFor="customer_email" className="block text-sm text-gray-700 mb-2">
+                Email for reminders (optional)
+              </label>
+              <input
+                id="customer_email"
+                name="customer_email"
+                type="email"
+                value={form.customer_email}
+                onChange={handleChange}
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--brand-primary)]"
+                placeholder="you@example.com"
+              />
             </div>
 
             <div className="grid md:grid-cols-2 gap-4">

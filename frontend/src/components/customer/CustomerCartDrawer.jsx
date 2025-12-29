@@ -8,6 +8,16 @@ import { isValidE164 } from "../../utils/validation";
 import PhoneInput from "../ui/PhoneInput";
 
 const formatMoney = (value) => new Intl.NumberFormat(undefined, { style: "currency", currency: "USD" }).format(value);
+const CUSTOMER_TRACKING_KEY = "customer_order_tracking_code";
+
+const getOrCreateCustomerTrackingCode = () => {
+  if (typeof window === "undefined") return "";
+  const existing = (localStorage.getItem(CUSTOMER_TRACKING_KEY) ?? "").trim();
+  if (existing) return existing;
+  const generated = `cust_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+  localStorage.setItem(CUSTOMER_TRACKING_KEY, generated);
+  return generated;
+};
 
 export default function CustomerCartDrawer({ isOpen, onClose }) {
   const { items, totalItems, totalPrice, updateItemQuantity, removeItem, clearCart } = useCustomerCart();
@@ -41,7 +51,8 @@ export default function CustomerCartDrawer({ isOpen, onClose }) {
   const hasInvalidItems = useMemo(() => {
     if (items.length === 0) return false;
     return items.some((item) => {
-      const id = Number(item.id);
+      const resolvedId = String(item.item_type ?? "").toLowerCase() === "medicine" ? item.item_id : item.item_id ?? item.id;
+      const id = Number(resolvedId);
       const qty = Number(item.quantity ?? 0);
       return !Number.isFinite(id) || id <= 0 || qty <= 0;
     });
@@ -97,13 +108,16 @@ export default function CustomerCartDrawer({ isOpen, onClose }) {
         })),
         draft_prescription_tokens: draftPrescriptionTokens.length > 0 ? draftPrescriptionTokens : null,
       };
-      const res = await api.post("/orders", payload);
-      const trackingCode = res.data?.tracking_code ?? "";
-      if (typeof window !== "undefined" && trackingCode) {
-        localStorage.setItem("customer_order_tracking_code", trackingCode);
+      const customerTrackingCode = getOrCreateCustomerTrackingCode();
+      const res = await api.post("/orders", payload, {
+        headers: customerTrackingCode ? { "X-Customer-ID": customerTrackingCode } : {},
+      });
+      const trackingCodeFromServer = res.data?.tracking_code ?? "";
+      if (typeof window !== "undefined" && trackingCodeFromServer) {
+        localStorage.setItem("customer_order_tracking_code", trackingCodeFromServer);
       }
       setResult({
-        tracking_code: trackingCode,
+        tracking_code: trackingCodeFromServer,
         status: res.data?.status,
       });
       clearCart();
@@ -115,8 +129,11 @@ export default function CustomerCartDrawer({ isOpen, onClose }) {
       });
       setPhoneError("");
     } catch (err) {
+      const detail = err?.response?.data?.detail;
+      const msg =
+        Array.isArray(detail) ? detail.map((d) => d?.msg ?? String(d)).filter(Boolean).join(" ") : detail ?? null;
       setResult({
-        error: err?.response?.data?.detail ?? "Unable to place your order. Please try again.",
+        error: msg ?? "Unable to place your order. Please try again.",
       });
     } finally {
       setIsSubmitting(false);

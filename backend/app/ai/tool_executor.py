@@ -211,6 +211,16 @@ def _default_quick_replies() -> list[str]:
     return ["Search another medicine", "Shop OTC products", "Book appointment", "Contact pharmacy"]
 
 
+def _greeting_prefix(language: str) -> str:
+    return (
+        "مرحباً! "
+        if language == "ar"
+        else "Bonjour! "
+        if language == "fr"
+        else "Hello! "
+    )
+
+
 def _merge_quick_replies(*groups: list[str]) -> list[str]:
     seen: set[str] = set()
     out: list[str] = []
@@ -309,8 +319,8 @@ async def build_tool_context(
         return ctx, citations, actions, immediate_answer
 
     if router.intent == "APPOINTMENT":
-        actions.append(schemas.AIAction(type="open_booking", label="Book appointment", payload={"path": "/appointments"}))
-        citations = [_system_citation("appointment", "Open booking page")]
+        actions.append(schemas.AIAction(type="book_appointment", label="Book appointment", payload={}))
+        citations = [_system_citation("appointment", "Open in-chat booking form")]
         ctx = ToolContext(
             intent="APPOINTMENT",
             language=router.language,
@@ -321,7 +331,7 @@ async def build_tool_context(
             cards=[],
             quick_replies=_default_quick_replies(),
         )
-        immediate_answer = "You can book an appointment here."
+        immediate_answer = "Sure - please fill the appointment form below."
         return ctx, citations, actions, immediate_answer
 
     if router.intent == "CART":
@@ -379,6 +389,42 @@ async def build_tool_context(
                 }
             )
         found = bool(items)
+        if found:
+            item = items[0]
+            mid = int(item["id"])
+            name = str(item["name"])
+            stock = int(item.get("stock") or 0)
+            price = item.get("price")
+            rx = bool(item.get("rx") or False)
+            price_text = f" Price: {float(price):.2f}." if price is not None else ""
+            if rx:
+                actions.append(
+                    schemas.AIAction(
+                        type="upload_prescription",
+                        label="Upload prescription",
+                        medicine_id=mid,
+                        payload={"medicine_id": mid},
+                    )
+                )
+                immediate_answer = f"Yes, we have {name} in stock ({stock}). This medicine requires a prescription.{price_text} Would you like to upload your prescription?"
+            elif stock > 0:
+                actions.append(
+                    schemas.AIAction(
+                        type="add_to_cart",
+                        label="Add to cart",
+                        medicine_id=mid,
+                        payload={"medicine_id": mid, "quantity": 1},
+                    )
+                )
+                immediate_answer = f"Yes, we have {name} in stock ({stock}).{price_text} Would you like me to add it to your cart?"
+            else:
+                immediate_answer = f"Sorry, {name} is currently out of stock.{price_text} Do you want to search another medicine?"
+        elif suggestions:
+            immediate_answer = "I could not find an exact match. Did you mean: " + ", ".join(suggestions[:3]) + "?"
+        else:
+            immediate_answer = "Which medicine are you looking for? Please share the name (and dosage, if possible)."
+        if getattr(router, "greeting", False) and immediate_answer:
+            immediate_answer = _greeting_prefix(router.language) + immediate_answer
         if turns is not None and found and items:
             session_memory.set_state(turns, "last_item", {"medicine_id": int(items[0]["id"]), "name": str(items[0]["name"])})
             if session_id:
@@ -402,7 +448,7 @@ async def build_tool_context(
             quick_replies=_merge_quick_replies(suggestions, _default_quick_replies()),
             data_last_updated_at=(matches[0].updated_at if matches else None),
         )
-        return ctx, citations, actions, None
+        return ctx, citations, actions, immediate_answer
 
     if router.intent == "PRODUCT_SEARCH":
         q = (router.query or "").strip() or ""
@@ -435,7 +481,16 @@ async def build_tool_context(
             cards=[],
             quick_replies=_merge_quick_replies(suggestions, _default_quick_replies()),
         )
-        return ctx, citations, actions, None
+        if items:
+            if len(items) == 1:
+                immediate_answer = f"Yes, we have {items[0].get('name')} in stock ({items[0].get('stock')})."
+            else:
+                immediate_answer = "Here are a few products I found: " + ", ".join(str(it.get("name")) for it in items[:3]) + "."
+        elif suggestions:
+            immediate_answer = "I could not find an exact match. Did you mean: " + ", ".join(suggestions[:3]) + "?"
+        else:
+            immediate_answer = "Which product are you looking for? Please share the name."
+        return ctx, citations, actions, immediate_answer
 
     if router.intent == "UNKNOWN":
         immediate_answer = (

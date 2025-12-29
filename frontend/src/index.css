@@ -96,7 +96,7 @@ body.customer-theme .bg-white {
 
 body.customer-theme .bg-gray-50,
 body.customer-theme .bg-slate-50,
-body.customer-theme .bg-slate-50\\/60 {
+body.customer-theme .bg-slate-50\/60 {
   background: var(--customer-surface-muted) !important;
 }
 

@@ -201,14 +201,67 @@ class Appointment(Base):
     customer_id = Column(String, nullable=False)
     customer_name = Column(String, nullable=True)
     customer_phone = Column(String, nullable=True)
+    customer_email = Column(String, nullable=True)
     type = Column(String, nullable=False)
     scheduled_time = Column(DateTime, nullable=False)
     status = Column(String, nullable=False, default="PENDING")
     vaccine_name = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    no_show = Column(Boolean, default=False, nullable=False)
+    no_show_marked_at = Column(DateTime, nullable=True)
 
     pharmacy_id = Column(Integer, ForeignKey("pharmacies.id"), nullable=False)
     pharmacy = relationship("Pharmacy", back_populates="appointments")
+
+
+class AppointmentSettings(Base):
+    __tablename__ = "appointment_settings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    pharmacy_id = Column(Integer, ForeignKey("pharmacies.id"), nullable=False, unique=True)
+    slot_minutes = Column(Integer, nullable=False, default=15)
+    buffer_minutes = Column(Integer, nullable=False, default=0)
+    timezone = Column(String, nullable=False, default="UTC")
+    weekly_hours_json = Column(Text, nullable=False, default="{}")
+    no_show_minutes = Column(Integer, nullable=False, default=30)
+    locale = Column(String, nullable=False, default="en")
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    pharmacy = relationship("Pharmacy")
+
+
+class AppointmentAudit(Base):
+    __tablename__ = "appointment_audits"
+
+    id = Column(Integer, primary_key=True, index=True)
+    appointment_id = Column(Integer, ForeignKey("appointments.id"), nullable=False, index=True)
+    action = Column(String, nullable=False)
+    old_values_json = Column(Text, nullable=True)
+    new_values_json = Column(Text, nullable=True)
+    changed_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    appointment = relationship("Appointment")
+    changed_by = relationship("User")
+
+
+class AppointmentReminder(Base):
+    __tablename__ = "appointment_reminders"
+
+    id = Column(Integer, primary_key=True, index=True)
+    appointment_id = Column(Integer, ForeignKey("appointments.id"), nullable=False, index=True)
+    channel = Column(String, nullable=False, default="EMAIL")
+    template = Column(String, nullable=False, default="24h")
+    send_at = Column(DateTime, nullable=False)
+    sent_at = Column(DateTime, nullable=True)
+    status = Column(String, nullable=False, default="PENDING")
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    appointment = relationship("Appointment")
 
 
 class AIInteraction(Base):

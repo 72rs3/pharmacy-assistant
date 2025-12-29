@@ -75,35 +75,42 @@ def _should_stub_fail_main(model: str) -> bool:
 def _stub_router(message: str) -> str:
     low = (message or "").strip().lower()
     if not low:
-        return json.dumps({"language": "en", "intent": "UNKNOWN", "query": None, "confidence": 0.0, "risk": "low", "clarifying_questions": []})
+        return json.dumps({"language": "en", "intent": "UNKNOWN", "query": None, "greeting": False, "confidence": 0.0, "risk": "low", "clarifying_questions": []})
     if any(ch in low for ch in ["مرحبا", "اهلا"]):
-        return json.dumps({"language": "ar", "intent": "GREETING", "query": None, "confidence": 0.9, "risk": "low", "clarifying_questions": []})
+        return json.dumps({"language": "ar", "intent": "GREETING", "query": None, "greeting": True, "confidence": 0.9, "risk": "low", "clarifying_questions": []})
     if low.startswith(("hi", "hello", "hey")):
-        return json.dumps({"language": "en", "intent": "GREETING", "query": None, "confidence": 0.9, "risk": "low", "clarifying_questions": []})
+        rest = low
+        for prefix in ["hi", "hello", "hey"]:
+            if rest.startswith(prefix):
+                rest = rest[len(prefix):].strip()
+                break
+        if rest:
+            return json.dumps({"language": "en", "intent": "MEDICINE_SEARCH", "query": rest, "greeting": True, "confidence": 0.7, "risk": "low", "clarifying_questions": []})
+        return json.dumps({"language": "en", "intent": "GREETING", "query": None, "greeting": True, "confidence": 0.9, "risk": "low", "clarifying_questions": []})
     if "pregnant" in low or "pregnancy" in low:
-        return json.dumps({"language": "en", "intent": "RISKY_MEDICAL", "query": None, "confidence": 0.9, "risk": "high", "clarifying_questions": []})
+        return json.dumps({"language": "en", "intent": "RISKY_MEDICAL", "query": None, "greeting": False, "confidence": 0.9, "risk": "high", "clarifying_questions": []})
     if "appointment" in low or "book" in low:
-        return json.dumps({"language": "en", "intent": "APPOINTMENT", "query": None, "confidence": 0.8, "risk": "low", "clarifying_questions": []})
+        return json.dumps({"language": "en", "intent": "APPOINTMENT", "query": None, "greeting": False, "confidence": 0.8, "risk": "low", "clarifying_questions": []})
     if "hours" in low or "open" in low or "contact" in low:
-        return json.dumps({"language": "en", "intent": "HOURS_CONTACT", "query": None, "confidence": 0.8, "risk": "low", "clarifying_questions": []})
+        return json.dumps({"language": "en", "intent": "HOURS_CONTACT", "query": None, "greeting": False, "confidence": 0.8, "risk": "low", "clarifying_questions": []})
     if "delivery" in low or "shipping" in low or "cod" in low or "cash on delivery" in low:
-        return json.dumps({"language": "en", "intent": "SERVICES", "query": None, "confidence": 0.75, "risk": "low", "clarifying_questions": []})
+        return json.dumps({"language": "en", "intent": "SERVICES", "query": None, "greeting": False, "confidence": 0.75, "risk": "low", "clarifying_questions": []})
     if any(w in low for w in ["toothpaste", "toothbrush", "shampoo", "soap", "vitamin"]):
-        return json.dumps({"language": "en", "intent": "PRODUCT_SEARCH", "query": low, "confidence": 0.7, "risk": "low", "clarifying_questions": []})
+        return json.dumps({"language": "en", "intent": "PRODUCT_SEARCH", "query": low, "greeting": False, "confidence": 0.7, "risk": "low", "clarifying_questions": []})
     if any(w in low for w in ["panadol", "amoxicillin", "brufen"]) or any(w in low for w in ["have", "available", "stock", "price", "looking for", "need", "want"]):
         q = low
         for prefix in ["im looking for", "i'm looking for", "looking for", "i want", "i need", "do you have"]:
             if q.startswith(prefix):
                 q = q[len(prefix):].strip()
                 break
-        return json.dumps({"language": "en", "intent": "MEDICINE_SEARCH", "query": q or low, "confidence": 0.7, "risk": "low", "clarifying_questions": []})
+        return json.dumps({"language": "en", "intent": "MEDICINE_SEARCH", "query": q or low, "greeting": False, "confidence": 0.7, "risk": "low", "clarifying_questions": []})
     if "cart" in low or "add to cart" in low:
-        return json.dumps({"language": "en", "intent": "CART", "query": None, "confidence": 0.7, "risk": "low", "clarifying_questions": []})
+        return json.dumps({"language": "en", "intent": "CART", "query": None, "greeting": False, "confidence": 0.7, "risk": "low", "clarifying_questions": []})
     if len(low) >= 6 and len(set(low)) <= 3:
-        return json.dumps({"language": "en", "intent": "UNKNOWN", "query": None, "confidence": 0.2, "risk": "low", "clarifying_questions": []})
+        return json.dumps({"language": "en", "intent": "UNKNOWN", "query": None, "greeting": False, "confidence": 0.2, "risk": "low", "clarifying_questions": []})
     if len(low.split()) <= 2:
-        return json.dumps({"language": "en", "intent": "MEDICINE_SEARCH", "query": low, "confidence": 0.6, "risk": "low", "clarifying_questions": []})
-    return json.dumps({"language": "en", "intent": "GENERAL_RAG", "query": low, "confidence": 0.6, "risk": "low", "clarifying_questions": []})
+        return json.dumps({"language": "en", "intent": "MEDICINE_SEARCH", "query": low, "greeting": False, "confidence": 0.6, "risk": "low", "clarifying_questions": []})
+    return json.dumps({"language": "en", "intent": "GENERAL_RAG", "query": low, "greeting": False, "confidence": 0.6, "risk": "low", "clarifying_questions": []})
 
 
 def _stub_generate(tool_context: dict) -> str:

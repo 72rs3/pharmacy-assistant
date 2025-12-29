@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -50,10 +52,19 @@ def add_cart_item(
     if bool(medicine.prescription_required):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Prescription required; cannot add to cart")
 
+    db.add(
+        models.AILog(
+            log_type="action_executed",
+            details=f"action=add_to_cart medicine_id={int(medicine.id)} qty={int(payload.quantity)}",
+            pharmacy_id=tenant_pharmacy_id,
+            timestamp=datetime.utcnow(),
+        )
+    )
+    db.commit()
+
     return CartItemAddOut(
         medicine_id=int(medicine.id),
         name=str(medicine.name),
         price=float(medicine.price) if medicine.price is not None else None,
         stock=int(medicine.stock_level or 0),
     )
-

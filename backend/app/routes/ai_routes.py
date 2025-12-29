@@ -32,6 +32,78 @@ def _log(db: Session, pharmacy_id: int, log_type: str, details: str) -> None:
     db.add(models.AILog(log_type=log_type, details=details, pharmacy_id=pharmacy_id))
 
 
+def _enforce_action_policy(tool_ctx: object, actions: list[schemas.AIAction]) -> list[schemas.AIAction]:
+    intent = str(getattr(tool_ctx, "intent", "") or "")
+    if intent != "MEDICINE_SEARCH":
+        return actions
+
+    med_id: int | None = None
+    rx: bool | None = None
+    stock: int | None = None
+
+    cards = getattr(tool_ctx, "cards", None) or []
+    if cards:
+        card = cards[0]
+        med_id = int(getattr(card, "medicine_id", 0) or 0) or None
+        rx = bool(getattr(card, "rx", False))
+        stock = int(getattr(card, "stock", 0) or 0)
+
+    items = getattr(tool_ctx, "items", None) or []
+    if items and isinstance(items[0], dict):
+        item = items[0]
+        med_id = med_id or (int(item.get("id") or 0) or None)
+        rx = bool(item.get("rx")) if rx is None else rx
+        stock = int(item.get("stock") or 0) if stock is None else stock
+
+    def action_med_id(action: schemas.AIAction) -> int | None:
+        if action.medicine_id:
+            return int(action.medicine_id)
+        payload = action.payload or {}
+        try:
+            return int(payload.get("medicine_id")) if payload.get("medicine_id") is not None else None
+        except Exception:
+            return None
+
+    def dedupe(vals: list[schemas.AIAction]) -> list[schemas.AIAction]:
+        seen: set[tuple[str, int | None]] = set()
+        out: list[schemas.AIAction] = []
+        for a in vals:
+            key = (str(a.type or ""), action_med_id(a))
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(a)
+        return out
+
+    if rx is True:
+        filtered = [a for a in actions if a.type != "add_to_cart"]
+        if not any(a.type == "upload_prescription" for a in filtered):
+            if med_id:
+                filtered.append(
+                    schemas.AIAction(
+                        type="upload_prescription",
+                        label="Upload prescription",
+                        medicine_id=med_id,
+                        payload={"medicine_id": med_id},
+                    )
+                )
+        return dedupe(filtered)
+
+    if stock is not None and stock <= 0:
+        return dedupe([a for a in actions if a.type != "add_to_cart"])
+
+    if med_id and stock is not None and stock > 0 and not any(a.type == "add_to_cart" for a in actions):
+        actions = actions + [
+            schemas.AIAction(
+                type="add_to_cart",
+                label="Add to cart",
+                medicine_id=med_id,
+                payload={"medicine_id": med_id, "quantity": 1},
+            )
+        ]
+    return dedupe(actions)
+
+
 @router.post("/chat", response_model=schemas.AIChatOut)
 async def chat(
     payload: schemas.AIChatIn,
@@ -106,7 +178,11 @@ async def chat(
             user_message=message,
             router_confidence=float(router.confidence or 0.0),
         )
-        answer = immediate_answer or gen.answer
+        answer = (gen.answer or "").strip()
+        if immediate_answer and (not answer or answer.lower().startswith("assistant temporarily unavailable")):
+            answer = immediate_answer
+        elif not answer:
+            answer = immediate_answer or ""
         # Keep existing action list from tools unless generator provided actions.
         if gen.actions:
             actions = [
@@ -118,6 +194,7 @@ async def chat(
                 )
                 for a in gen.actions
             ]
+        actions = _enforce_action_policy(tool_ctx, actions or [])
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 

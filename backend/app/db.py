@@ -126,6 +126,12 @@ def ensure_sqlite_schema(db_engine: Engine) -> None:
         if "appointments" in tables:
             add_column_if_missing("appointments", "customer_name", "customer_name VARCHAR")
             add_column_if_missing("appointments", "customer_phone", "customer_phone VARCHAR")
+            add_column_if_missing("appointments", "customer_email", "customer_email VARCHAR")
+            add_column_if_missing("appointments", "status", "status VARCHAR")
+            add_column_if_missing("appointments", "created_at", "created_at DATETIME")
+            add_column_if_missing("appointments", "updated_at", "updated_at DATETIME")
+            add_column_if_missing("appointments", "no_show", "no_show INTEGER NOT NULL DEFAULT 0")
+            add_column_if_missing("appointments", "no_show_marked_at", "no_show_marked_at DATETIME")
 
         if "ai_interactions" in tables:
             add_column_if_missing("ai_interactions", "customer_id", "customer_id VARCHAR")

@@ -1,12 +1,15 @@
-﻿import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Minimize2, Pill, Send, X } from "lucide-react";
 import api from "../../api/axios";
 import { useCustomerCart } from "../../context/CustomerCartContext";
 import { useTenant } from "../../context/TenantContext";
+import { isValidE164 } from "../../utils/validation";
+import PhoneInput from "../ui/PhoneInput";
 
 const CHAT_ID_KEY = "customer_chat_id";
 const SESSION_ID_KEY = "customer_session_id";
+const APPOINTMENT_TRACKING_CODE_KEY = "customer_appointment_tracking_code";
 
 const defaultSuggestions = [
   "Check medication availability",
@@ -24,7 +27,26 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
   const navigate = useNavigate();
   const { addItem } = useCustomerCart();
   const { pharmacy } = useTenant() ?? {};
-  const [rxOrderDraft, setRxOrderDraft] = useState({ medicineId: null, awaitingDetails: false });
+  const [rxOrderDraft, setRxOrderDraft] = useState({ medicineId: null, showForm: false });
+  const [rxForm, setRxForm] = useState({
+    customer_name: "",
+    customer_phone: "",
+    customer_address: "",
+    customer_notes: "",
+  });
+  const [rxFormError, setRxFormError] = useState("");
+  const [isPlacingRxOrder, setIsPlacingRxOrder] = useState(false);
+  const [apptForm, setApptForm] = useState({
+    customer_name: "",
+    customer_phone: "",
+    customer_email: "",
+    type: "Consultation",
+    scheduled_time: "",
+    vaccine_name: "",
+    notes: "",
+  });
+  const [apptError, setApptError] = useState("");
+  const [isSubmittingAppt, setIsSubmittingAppt] = useState(false);
   const [messages, setMessages] = useState([
     {
       id: "welcome",
@@ -126,99 +148,6 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
     const trimmed = inputValue.trim();
     if (!trimmed) return;
 
-    if (rxOrderDraft.awaitingDetails && rxOrderDraft.medicineId) {
-      const phoneMatch = trimmed.match(/(\+\d{7,15})/);
-      const phone = phoneMatch ? phoneMatch[1] : "";
-      const nameMatch = trimmed.match(/\b(my name is|i am|i'm)\s+([a-zA-Z][a-zA-Z\s'-]{1,60})\b/i);
-      const name = nameMatch ? nameMatch[2].trim() : "";
-      const address = trimmed.replace(phone, "").replace(nameMatch?.[0] ?? "", "").replace(/^[,\s]+|[,\s]+$/g, "");
-      if (!phone || !address || !name) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: `bot-action-${Date.now()}`,
-            type: "bot",
-            text: "Please include name, phone (+E.164), and address in one message.",
-            timestamp: new Date(),
-            allowPrescriptionUpload: false,
-          },
-        ]);
-        setInputValue("");
-        return;
-      }
-      let draftPrescriptionTokens = [];
-      if (typeof window !== "undefined") {
-        try {
-          const raw = localStorage.getItem("customer_prescription_draft_tokens");
-          const parsed = raw ? JSON.parse(raw) : [];
-          draftPrescriptionTokens = Array.isArray(parsed) ? parsed.filter(Boolean) : [];
-        } catch {
-          draftPrescriptionTokens = [];
-        }
-      }
-      if (!draftPrescriptionTokens.length) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: `bot-action-${Date.now()}`,
-            type: "bot",
-            text: "Please upload your prescription first.",
-            timestamp: new Date(),
-            allowPrescriptionUpload: true,
-          },
-        ]);
-        setInputValue("");
-        return;
-      }
-
-      const userMessage = {
-        id: `user-${Date.now()}`,
-        type: "user",
-        text: trimmed,
-        timestamp: new Date(),
-      };
-      setMessages((prev) => [...prev, userMessage]);
-      setInputValue("");
-      setIsTyping(true);
-      try {
-        const res = await api.post("/orders/rx", {
-          customer_name: name,
-          customer_phone: phone,
-          customer_address: address,
-          customer_notes: null,
-          medicine_id: Number(rxOrderDraft.medicineId),
-          quantity: 1,
-          draft_prescription_tokens: draftPrescriptionTokens,
-        });
-        setRxOrderDraft({ medicineId: null, awaitingDetails: false });
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: `bot-action-${Date.now()}`,
-            type: "bot",
-            text: `Rx order placed (Order #${res.data?.order_id ?? "?"}). A pharmacist can now review and approve your prescription.`,
-            timestamp: new Date(),
-            allowPrescriptionUpload: false,
-            quickReplies: ["Contact pharmacy"],
-          },
-        ]);
-      } catch (err) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: `bot-action-${Date.now()}`,
-            type: "bot",
-            text: err?.response?.data?.detail ?? "Couldn't place the Rx order. Please try again.",
-            timestamp: new Date(),
-            allowPrescriptionUpload: false,
-          },
-        ]);
-      } finally {
-        setIsTyping(false);
-      }
-      return;
-    }
-
     const userMessage = {
       id: `user-${Date.now()}`,
       type: "user",
@@ -252,20 +181,21 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
       }
 
       const answer = res.data?.answer ?? "";
+      const intent = res.data?.intent ?? "";
       const dataLastUpdatedAt = res.data?.data_last_updated_at ?? null;
       const indexedAt = res.data?.indexed_at ?? null;
+      const cards = Array.isArray(res.data?.cards) ? res.data.cards : [];
+      const includeFreshness = intent === "MEDICINE_SEARCH" || (cards && cards.length > 0);
       const botMessage = {
         id: `bot-${res.data?.interaction_id ?? Date.now()}`,
         type: "bot",
         text: answer,
         timestamp: new Date(res.data?.created_at ?? Date.now()),
+        intent,
         allowPrescriptionUpload: shouldOfferPrescriptionUpload(answer),
-        freshness: {
-          dataLastUpdatedAt,
-          indexedAt,
-        },
+        freshness: includeFreshness ? { dataLastUpdatedAt, indexedAt } : null,
         actions: Array.isArray(res.data?.actions) ? res.data.actions : [],
-        cards: Array.isArray(res.data?.cards) ? res.data.cards : [],
+        cards,
         quickReplies: Array.isArray(res.data?.quick_replies) ? res.data.quick_replies : [],
       };
       setMessages((prev) => [...prev, botMessage]);
@@ -289,10 +219,194 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
   const handleSuggestionClick = (suggestion) => {
     const normalized = (suggestion ?? "").toLowerCase();
     if (normalized.includes("appointment")) {
-      navigate("/appointments");
+      setApptForm({
+        customer_name: "",
+        customer_phone: "",
+        customer_email: "",
+        type: "Consultation",
+        scheduled_time: "",
+        vaccine_name: "",
+        notes: "",
+      });
+      setApptError("");
+      setMessages((prev) => [
+        ...prev.filter((m) => !m.appointmentForm),
+        {
+          id: `bot-appt-form-${Date.now()}`,
+          type: "bot",
+          text: "Please fill your details to book an appointment:",
+          appointmentForm: true,
+          timestamp: new Date(),
+          allowPrescriptionUpload: false,
+        },
+      ]);
+      return;
+    }
+    if (normalized.includes("contact")) {
+      navigate("/contact");
+      return;
+    }
+    if (normalized.includes("shop")) {
+      navigate("/shop");
       return;
     }
     setInputValue(suggestion);
+  };
+
+  const getAppointmentTrackingCode = () => {
+    if (typeof window === "undefined") return "";
+    return (localStorage.getItem(APPOINTMENT_TRACKING_CODE_KEY) ?? "").trim();
+  };
+
+  const handleAppointmentSubmit = async (event) => {
+    event.preventDefault();
+    if (isSubmittingAppt) return;
+    const name = apptForm.customer_name.trim();
+    const phone = apptForm.customer_phone.trim();
+    const email = apptForm.customer_email.trim();
+    const type = apptForm.type.trim();
+    const scheduled = apptForm.scheduled_time;
+    const vaccineName = type === "Vaccination" ? apptForm.vaccine_name.trim() : "";
+
+    if (!name || !phone || !type || !scheduled) {
+      setApptError("Please fill name, phone, type, and date/time.");
+      return;
+    }
+    if (!isValidE164(phone)) {
+      setApptError("Phone must be in E.164 format, e.g. +15551234567.");
+      return;
+    }
+    if (type === "Vaccination" && !vaccineName) {
+      setApptError("Please enter the vaccine name.");
+      return;
+    }
+
+    setApptError("");
+    setIsSubmittingAppt(true);
+    try {
+      const payload = {
+        customer_name: name,
+        customer_phone: phone,
+        customer_email: email || null,
+        type,
+        scheduled_time: scheduled,
+        vaccine_name: type === "Vaccination" ? vaccineName : null,
+      };
+      const trackingCode = getAppointmentTrackingCode();
+      const res = await api.post("/appointments", payload, {
+        headers: trackingCode ? { "X-Customer-ID": trackingCode } : {},
+      });
+      const nextTracking = (res.data?.tracking_code ?? "").trim();
+      if (typeof window !== "undefined" && nextTracking) {
+        localStorage.setItem(APPOINTMENT_TRACKING_CODE_KEY, nextTracking);
+      }
+      setMessages((prev) => [
+        ...prev.filter((m) => !m.appointmentForm),
+        {
+          id: `bot-appt-${Date.now()}`,
+          type: "bot",
+          text: `Appointment request submitted (#${res.data?.id ?? "?"}). A pharmacist will confirm it. You can review it in the appointments page.`,
+          timestamp: new Date(),
+          allowPrescriptionUpload: false,
+          quickReplies: ["Book appointment", "Contact pharmacy"],
+        },
+      ]);
+      setApptForm({
+        customer_name: "",
+        customer_phone: "",
+        customer_email: "",
+        type: "Consultation",
+        scheduled_time: "",
+        vaccine_name: "",
+        notes: "",
+      });
+    } catch (err) {
+      setApptError(err?.response?.data?.detail ?? "Couldn't submit the appointment. Please try again.");
+    } finally {
+      setIsSubmittingAppt(false);
+    }
+  };
+
+  const handleRxOrderSubmit = async (event, medicineId) => {
+    event.preventDefault();
+    if (isPlacingRxOrder) return;
+    const name = rxForm.customer_name.trim();
+    const phone = rxForm.customer_phone.trim();
+    const address = rxForm.customer_address.trim();
+    const notes = rxForm.customer_notes.trim() ? rxForm.customer_notes.trim() : null;
+
+    if (!name || !phone || !address) {
+      setRxFormError("Please fill name, phone, and address.");
+      return;
+    }
+    if (!isValidE164(phone)) {
+      setRxFormError("Phone must be in E.164 format, e.g. +15551234567.");
+      return;
+    }
+    setRxFormError("");
+
+    let draftPrescriptionTokens = [];
+    if (typeof window !== "undefined") {
+      try {
+        const raw = localStorage.getItem("customer_prescription_draft_tokens");
+        const parsed = raw ? JSON.parse(raw) : [];
+        draftPrescriptionTokens = Array.isArray(parsed) ? parsed.filter(Boolean) : [];
+      } catch {
+        draftPrescriptionTokens = [];
+      }
+    }
+    if (!draftPrescriptionTokens.length) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `bot-action-${Date.now()}`,
+          type: "bot",
+          text: "Please upload your prescription first.",
+          timestamp: new Date(),
+          allowPrescriptionUpload: true,
+        },
+      ]);
+      return;
+    }
+
+    setIsPlacingRxOrder(true);
+    try {
+      const res = await api.post("/orders/rx", {
+        customer_name: name,
+        customer_phone: phone,
+        customer_address: address,
+        customer_notes: notes,
+        medicine_id: Number(medicineId),
+        quantity: 1,
+        draft_prescription_tokens: draftPrescriptionTokens,
+      });
+      setRxOrderDraft({ medicineId: null, showForm: false });
+      setRxForm({ customer_name: "", customer_phone: "", customer_address: "", customer_notes: "" });
+      setMessages((prev) => [
+        ...prev.filter((m) => !m.rxOrderForm),
+        {
+          id: `bot-action-${Date.now()}`,
+          type: "bot",
+          text: `Rx order placed (Order #${res.data?.order_id ?? "?"}). A pharmacist can now review and approve your prescription.`,
+          timestamp: new Date(),
+          allowPrescriptionUpload: false,
+          quickReplies: ["Contact pharmacy"],
+        },
+      ]);
+    } catch (err) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `bot-action-${Date.now()}`,
+          type: "bot",
+          text: err?.response?.data?.detail ?? "Couldn't place the Rx order. Please try again.",
+          timestamp: new Date(),
+          allowPrescriptionUpload: false,
+        },
+      ]);
+    } finally {
+      setIsPlacingRxOrder(false);
+    }
   };
 
   const handleUpload = async (event) => {
@@ -415,11 +529,11 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
                         <div key={card.medicine_id} className="bg-white/70 border border-slate-200 rounded-xl p-3">
                           <div className="text-sm font-semibold text-gray-900">{card.name}</div>
                           <div className="text-xs text-gray-600 mt-1">
-                            {card.dosage ? `Dosage: ${card.dosage} Â· ` : ""}
-                            {card.rx ? "Rx required" : "OTC"} Â· Stock: {Number(card.stock ?? 0)}
+                            {card.dosage ? `Dosage: ${card.dosage} - ` : ""}
+                            {card.rx ? "Rx required" : "OTC"} - Stock: {Number(card.stock ?? 0)}
                           </div>
                           <div className="text-xs text-gray-600 mt-1">
-                            {card.price != null ? `Price: ${Number(card.price).toFixed(2)}` : "Price: -"} Â·{" "}
+                            {card.price != null ? `Price: ${Number(card.price).toFixed(2)}` : "Price: -"} -{" "}
                             {card.updated_at ? `Updated: ${new Date(card.updated_at).toLocaleString()}` : "Updated: -"}
                           </div>
                           {card.indexed_at ? (
@@ -438,15 +552,45 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
                           key={`${action.type}-${action.medicine_id ?? "x"}-${index}`}
                           type="button"
                           onClick={() => {
-                            if (action.type === "place_rx_order" && action.medicine_id) {
-                              setRxOrderDraft({ medicineId: Number(action.medicine_id), awaitingDetails: true });
+                            if (action.type === "book_appointment") {
+                              setApptForm({
+                                customer_name: "",
+                                customer_phone: "",
+                                customer_email: "",
+                                type: "Consultation",
+                                scheduled_time: "",
+                                vaccine_name: "",
+                                notes: "",
+                              });
+                              setApptError("");
                               setMessages((prev) => [
-                                ...prev,
+                                ...prev.filter((m) => !m.appointmentForm),
+                                {
+                                  id: `bot-appt-form-${Date.now()}`,
+                                  type: "bot",
+                                  text: "Please fill your details to book an appointment:",
+                                  appointmentForm: true,
+                                  timestamp: new Date(),
+                                  allowPrescriptionUpload: false,
+                                },
+                              ]);
+                              return;
+                            }
+                            if (action.type === "open_booking") {
+                              navigate("/appointments");
+                              return;
+                            }
+                            if (action.type === "place_rx_order" && action.medicine_id) {
+                              setRxOrderDraft({ medicineId: Number(action.medicine_id), showForm: true });
+                              setRxForm({ customer_name: "", customer_phone: "", customer_address: "", customer_notes: "" });
+                              setRxFormError("");
+                              setMessages((prev) => [
+                                ...prev.filter((m) => !m.rxOrderForm),
                                 {
                                   id: `bot-action-${Date.now()}`,
                                   type: "bot",
-                                  text:
-                                    "To place the Rx order, please reply with: name, phone (+E.164), and address. Example: \"My name is Ali, +15551234567, 123 Main St\"",
+                                  text: "Please fill your details to place the Rx order:",
+                                  rxOrderForm: { medicineId: Number(action.medicine_id) },
                                   timestamp: new Date(),
                                   allowPrescriptionUpload: false,
                                 },
@@ -516,6 +660,115 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
                       ))}
                     </div>
                   ) : null}
+                  {message.appointmentForm ? (
+                    <form onSubmit={handleAppointmentSubmit} className="mt-3 space-y-2 max-w-[85%]">
+                      <input
+                        value={apptForm.customer_name}
+                        onChange={(event) => setApptForm((prev) => ({ ...prev, customer_name: event.target.value }))}
+                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                        placeholder="Full name"
+                        required
+                      />
+                      <PhoneInput
+                        value={apptForm.customer_phone}
+                        onChange={(next) => setApptForm((prev) => ({ ...prev, customer_phone: next }))}
+                        className="bg-white"
+                        placeholder="Phone number"
+                        required
+                      />
+                      <input
+                        type="email"
+                        value={apptForm.customer_email}
+                        onChange={(event) => setApptForm((prev) => ({ ...prev, customer_email: event.target.value }))}
+                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                        placeholder="Email for reminders (optional)"
+                      />
+                      <select
+                        value={apptForm.type}
+                        onChange={(event) => setApptForm((prev) => ({ ...prev, type: event.target.value }))}
+                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                      >
+                        <option value="Consultation">Consultation</option>
+                        <option value="Medication Review">Medication review</option>
+                        <option value="Vaccination">Vaccination</option>
+                      </select>
+                      <input
+                        type="datetime-local"
+                        value={apptForm.scheduled_time}
+                        onChange={(event) => setApptForm((prev) => ({ ...prev, scheduled_time: event.target.value }))}
+                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                        required
+                      />
+                      {apptForm.type === "Vaccination" ? (
+                        <input
+                          value={apptForm.vaccine_name}
+                          onChange={(event) => setApptForm((prev) => ({ ...prev, vaccine_name: event.target.value }))}
+                          className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                          placeholder="Vaccine name (Flu, COVID-19, etc.)"
+                          required
+                        />
+                      ) : null}
+                      {apptError ? <div className="text-xs text-red-600">{apptError}</div> : null}
+                      <button
+                        type="submit"
+                        disabled={isSubmittingAppt}
+                        className="w-full py-2.5 bg-[var(--brand-accent)] text-white rounded-xl hover:opacity-95 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                      >
+                        {isSubmittingAppt ? "Submitting..." : "Reserve appointment"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setMessages((prev) => prev.filter((m) => !m.appointmentForm))}
+                        className="w-full py-2.5 border border-slate-200 rounded-xl text-gray-700 hover:bg-slate-50"
+                      >
+                        Cancel
+                      </button>
+                    </form>
+                  ) : null}
+                  {message.rxOrderForm && message.rxOrderForm.medicineId ? (
+                    <form
+                      onSubmit={(event) => handleRxOrderSubmit(event, message.rxOrderForm.medicineId)}
+                      className="mt-3 space-y-2 max-w-[85%]"
+                    >
+                      <input
+                        value={rxForm.customer_name}
+                        onChange={(event) => setRxForm((prev) => ({ ...prev, customer_name: event.target.value }))}
+                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                        placeholder="Full name"
+                        required
+                      />
+                      <PhoneInput
+                        value={rxForm.customer_phone}
+                        onChange={(next) => setRxForm((prev) => ({ ...prev, customer_phone: next }))}
+                        className="bg-white"
+                        placeholder="Phone number"
+                        required
+                      />
+                      <textarea
+                        value={rxForm.customer_address}
+                        onChange={(event) => setRxForm((prev) => ({ ...prev, customer_address: event.target.value }))}
+                        rows="2"
+                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                        placeholder="Delivery address"
+                        required
+                      />
+                      <textarea
+                        value={rxForm.customer_notes}
+                        onChange={(event) => setRxForm((prev) => ({ ...prev, customer_notes: event.target.value }))}
+                        rows="2"
+                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                        placeholder="Notes (optional)"
+                      />
+                      {rxFormError ? <div className="text-xs text-red-600">{rxFormError}</div> : null}
+                      <button
+                        type="submit"
+                        disabled={isPlacingRxOrder}
+                        className="w-full py-2.5 bg-[var(--brand-accent)] text-white rounded-xl hover:opacity-95 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                      >
+                        {isPlacingRxOrder ? "Placing Rx order..." : "Place Rx order"}
+                      </button>
+                    </form>
+                  ) : null}
                   {message.quickReplies && message.quickReplies.length > 0 ? (
                     <div className="mt-2 flex flex-wrap gap-2">
                       {message.quickReplies.map((reply) => (
@@ -534,11 +787,11 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
                     <div className="mt-2 text-[11px] text-gray-500">
                       {message.freshness.dataLastUpdatedAt
                         ? `Data last updated: ${new Date(message.freshness.dataLastUpdatedAt).toLocaleString()}`
-                        : "Data last updated: â€”"}
-                      {" Â· "}
+                        : "Data last updated: -"}
+                      {" - "}
                       {message.freshness.indexedAt
                         ? `Indexed at: ${new Date(message.freshness.indexedAt).toLocaleString()}`
-                        : "Indexed at: â€”"}
+                        : "Indexed at: -"}
                     </div>
                   ) : null}
                   {message.allowPrescriptionUpload ? (

@@ -18,7 +18,7 @@ class GeneratedCitation(BaseModel):
 
 
 class GeneratedAction(BaseModel):
-    type: Literal["add_to_cart", "upload_prescription", "open_booking", "search_medicine"]
+    type: Literal["add_to_cart", "upload_prescription", "book_appointment", "search_medicine"]
     label: str
     payload: dict[str, Any] = Field(default_factory=dict)
 
@@ -59,7 +59,7 @@ async def _call_model(model: str, *, tool_context: dict, user_message: str, max_
         '  "language": "en|ar|fr",\n'
         '  "confidence": number,\n'
         '  "citations": [{"source": string, "doc_id": number, "chunk_id": number}],\n'
-        '  "actions": [{"type":"add_to_cart|upload_prescription|open_booking|search_medicine","label":string,"payload":{}}],\n'
+        '  "actions": [{"type":"add_to_cart|upload_prescription|book_appointment|search_medicine","label":string,"payload":{}}],\n'
         '  "quick_replies": [string],\n'
         '  "escalated": boolean\n'
         "}\n"

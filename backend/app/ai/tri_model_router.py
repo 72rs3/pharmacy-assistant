@@ -29,6 +29,7 @@ class RouterIntent(BaseModel):
     language: Literal["en", "ar", "fr"] = "en"
     intent: Intent
     query: str | None = None
+    greeting: bool = False
     confidence: float = Field(ge=0.0, le=1.0, default=0.0)
     risk: Literal["low", "medium", "high"] = "low"
     clarifying_questions: list[str] = Field(default_factory=list)
@@ -63,27 +64,36 @@ def _heuristic_fallback(message: str) -> RouterIntent:
     lang = _detect_language(message)
     if not tokens:
         return RouterIntent(language=lang, intent="UNKNOWN", confidence=0.0, risk="low")
-    if low.startswith(("hi", "hello", "hey")) or low in {"hi", "hello", "hey", "thanks", "thank", "thx"}:
-        return RouterIntent(language=lang, intent="GREETING", confidence=0.8, risk="low")
+    greeting = False
+    if tokens and tokens[0] in {"hi", "hello", "hey"}:
+        greeting = True
+        tokens = tokens[1:]
+        low = " ".join(tokens)
+    if not tokens:
+        if greeting:
+            return RouterIntent(language=lang, intent="GREETING", confidence=0.8, risk="low", greeting=True)
+        return RouterIntent(language=lang, intent="UNKNOWN", confidence=0.0, risk="low")
+    if low in {"thanks", "thank", "thx"}:
+        return RouterIntent(language=lang, intent="GREETING", confidence=0.8, risk="low", greeting=greeting)
     if any(w in low for w in ["pregnant", "pregnancy", "breastfeed"]) or any(
         w in low for w in ["chest pain", "shortness of breath", "seizure", "overdose"]
     ):
-        return RouterIntent(language=lang, intent="RISKY_MEDICAL", confidence=0.9, risk="high")
+        return RouterIntent(language=lang, intent="RISKY_MEDICAL", confidence=0.9, risk="high", greeting=greeting)
     if any(w in tokens for w in {"hours", "open", "opening", "closing", "contact", "phone", "email", "address"}):
-        return RouterIntent(language=lang, intent="HOURS_CONTACT", confidence=0.8, risk="low")
+        return RouterIntent(language=lang, intent="HOURS_CONTACT", confidence=0.8, risk="low", greeting=greeting)
     if any(w in tokens for w in {"delivery", "deliver", "shipping", "cod", "cash", "payment", "refund", "return"}):
-        return RouterIntent(language=lang, intent="SERVICES", confidence=0.7, risk="low")
+        return RouterIntent(language=lang, intent="SERVICES", confidence=0.7, risk="low", greeting=greeting)
     if any(w in tokens for w in {"appointment", "book", "booking", "schedule", "visit"}):
-        return RouterIntent(language=lang, intent="APPOINTMENT", confidence=0.8, risk="low")
+        return RouterIntent(language=lang, intent="APPOINTMENT", confidence=0.8, risk="low", greeting=greeting)
     if any(w in tokens for w in {"cart", "checkout", "reserve"}) or ("add" in tokens and "cart" in tokens):
-        return RouterIntent(language=lang, intent="CART", confidence=0.7, risk="low")
+        return RouterIntent(language=lang, intent="CART", confidence=0.7, risk="low", greeting=greeting)
     if any(w in tokens for w in {"toothpaste", "toothbrush", "shampoo", "soap", "vitamin", "supplement", "skincare", "lotion"}):
-        return RouterIntent(language=lang, intent="PRODUCT_SEARCH", confidence=0.7, risk="low", query=message.strip())
+        return RouterIntent(language=lang, intent="PRODUCT_SEARCH", confidence=0.7, risk="low", query=message.strip(), greeting=greeting)
     if any(w in tokens for w in {"have", "available", "availability", "stock", "price", "cost", "medicine", "medication", "drug", "rx"}):
-        return RouterIntent(language=lang, intent="MEDICINE_SEARCH", confidence=0.7, risk="low", query=message.strip())
+        return RouterIntent(language=lang, intent="MEDICINE_SEARCH", confidence=0.7, risk="low", query=message.strip(), greeting=greeting)
     if len(tokens) <= 2:
-        return RouterIntent(language=lang, intent="MEDICINE_SEARCH", confidence=0.55, risk="low", query=message.strip())
-    return RouterIntent(language=lang, intent="GENERAL_RAG", confidence=0.5, risk="low", query=message.strip())
+        return RouterIntent(language=lang, intent="MEDICINE_SEARCH", confidence=0.55, risk="low", query=message.strip(), greeting=greeting)
+    return RouterIntent(language=lang, intent="GENERAL_RAG", confidence=0.5, risk="low", query=message.strip(), greeting=greeting)
 
 
 async def route_intent(message: str, *, pharmacy_id: int | None = None, session_id: str | None = None) -> RouterIntent:
@@ -99,6 +109,7 @@ async def route_intent(message: str, *, pharmacy_id: int | None = None, session_
         '  "language": "en|ar|fr",\n'
         '  "intent": "GREETING|MEDICINE_SEARCH|PRODUCT_SEARCH|SERVICES|HOURS_CONTACT|APPOINTMENT|CART|GENERAL_RAG|RISKY_MEDICAL|UNKNOWN",\n'
         '  "query": string|null,\n'
+        '  "greeting": boolean,\n'
         '  "confidence": number,\n'
         '  "risk": "low|medium|high",\n'
         '  "clarifying_questions": [string]\n'
@@ -108,6 +119,7 @@ async def route_intent(message: str, *, pharmacy_id: int | None = None, session_
         "- Prefer MEDICINE_SEARCH when the user mentions a drug/medicine name or says looking for/need/price/stock.\n"
         "- Prefer PRODUCT_SEARCH for toothbrush/toothpaste/sunblock/vitamins/etc.\n"
         "- If pregnancy/child/severe symptoms/interactions/antibiotics/controlled meds -> intent=RISKY_MEDICAL, risk=high.\n"
+        "- If the message includes a greeting AND another request, set greeting=true but keep intent for the request.\n"
         "- Always set confidence 0..1.\n"
     )
     user = f"Message: {message}"

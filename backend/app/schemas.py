@@ -364,10 +364,15 @@ class AppointmentBase(BaseModel):
     customer_id: str
     customer_name: str | None = None
     customer_phone: str | None = None
+    customer_email: str | None = None
     type: str
     scheduled_time: datetime
     status: str = "PENDING"
     vaccine_name: Optional[str] = None
+    no_show: bool = False
+    no_show_marked_at: datetime | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
 
 class AppointmentCreate(AppointmentBase):
@@ -384,6 +389,7 @@ class Appointment(AppointmentBase):
 class CustomerAppointmentCreate(BaseModel):
     customer_name: str
     customer_phone: str
+    customer_email: str | None = None
     type: str
     scheduled_time: datetime
     vaccine_name: str | None = None
@@ -393,10 +399,13 @@ class CustomerAppointmentOut(BaseModel):
     id: int
     customer_name: str | None = None
     customer_phone: str | None = None
+    customer_email: str | None = None
     type: str
     scheduled_time: datetime
     status: str
     vaccine_name: str | None = None
+    no_show: bool = False
+    no_show_marked_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -408,6 +417,55 @@ class CustomerAppointmentCreated(CustomerAppointmentOut):
 class AppointmentUpdateIn(BaseModel):
     status: str | None = None  # PENDING / CONFIRMED / CANCELLED / COMPLETED
     scheduled_time: datetime | None = None
+
+
+class AppointmentSettingsBase(BaseModel):
+    slot_minutes: int = 15
+    buffer_minutes: int = 0
+    timezone: str = "UTC"
+    weekly_hours_json: str = "{}"
+    no_show_minutes: int = 30
+    locale: str = "en"
+
+
+class AppointmentSettingsUpdate(AppointmentSettingsBase):
+    pass
+
+
+class AppointmentSettings(AppointmentSettingsBase):
+    id: int
+    pharmacy_id: int
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AppointmentAudit(BaseModel):
+    id: int
+    appointment_id: int
+    action: str
+    old_values_json: str | None = None
+    new_values_json: str | None = None
+    changed_by_user_id: int | None = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AppointmentReminder(BaseModel):
+    id: int
+    appointment_id: int
+    channel: str
+    template: str
+    send_at: datetime
+    sent_at: datetime | None = None
+    status: str
+    error_message: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 # --------------------

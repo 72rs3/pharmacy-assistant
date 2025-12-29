@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import secrets
+from datetime import datetime
 from pathlib import Path
 from typing import List
 
@@ -86,6 +87,14 @@ async def upload_prescription_draft(
 
     for item in created:
         db.add(item)
+    db.add(
+        models.AILog(
+            log_type="action_executed",
+            details=f"action=upload_prescription_draft files={len(created)}",
+            pharmacy_id=tenant_pharmacy_id,
+            timestamp=datetime.utcnow(),
+        )
+    )
     db.commit()
     for item in created:
         db.refresh(item)
@@ -130,6 +139,14 @@ async def upload_prescription(
 
     for item in created:
         db.add(item)
+    db.add(
+        models.AILog(
+            log_type="action_executed",
+            details=f"action=upload_prescription order_id={int(order_id)} files={len(created)}",
+            pharmacy_id=tenant_pharmacy_id,
+            timestamp=datetime.utcnow(),
+        )
+    )
     db.commit()
     for item in created:
         db.refresh(item)
@@ -174,6 +191,14 @@ def review_prescription(
 
     prescription.status = review.status
     prescription.reviewer_id = current_user.id
+    db.add(
+        models.AILog(
+            log_type="action_executed",
+            details=f"action=review_prescription prescription_id={int(prescription_id)} status={review.status}",
+            pharmacy_id=current_user.pharmacy_id,
+            timestamp=datetime.utcnow(),
+        )
+    )
     db.commit()
     db.refresh(prescription)
     return prescription
