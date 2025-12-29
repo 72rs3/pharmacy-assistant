@@ -1,11 +1,7 @@
 import os
 from pathlib import Path
 
-import os
-from pathlib import Path
-
 from sqlalchemy import create_engine
-from sqlalchemy.engine import Engine
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 
@@ -19,20 +15,9 @@ DATABASE_URL = os.getenv("DATABASE_URL", DEFAULT_DATABASE_URL)
 
 def _is_sqlite_url(url: str) -> bool:
     return url.startswith("sqlite:")
-BACKEND_DIR = Path(__file__).resolve().parents[1]
-DEFAULT_SQLITE_PATH = (BACKEND_DIR / "pharmacy.db").resolve()
-DEFAULT_DATABASE_URL = f"sqlite:///{DEFAULT_SQLITE_PATH.as_posix()}"
-
-# Prefer an explicit DATABASE_URL (Postgres in prod, SQLite for quick local dev).
-DATABASE_URL = os.getenv("DATABASE_URL", DEFAULT_DATABASE_URL)
-
-
-def _is_sqlite_url(url: str) -> bool:
-    return url.startswith("sqlite:")
 
 engine = create_engine(
     DATABASE_URL,
-    connect_args={"check_same_thread": False} if _is_sqlite_url(DATABASE_URL) else {},
     connect_args={"check_same_thread": False} if _is_sqlite_url(DATABASE_URL) else {},
 )
 

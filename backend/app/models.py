@@ -4,7 +4,6 @@ from datetime import datetime
 
 from app.db import Base
 from app.ai.types import Embedding
-from app.ai.types import Embedding
 
 
 class Pharmacy(Base):
@@ -35,7 +34,6 @@ class Pharmacy(Base):
 
     # Implementation-specific fields
     domain = Column(String, unique=True, index=True, nullable=True)  # for future subdomains
-    is_active = Column(Boolean, default=False, nullable=False)
     is_active = Column(Boolean, default=False, nullable=False)
 
     owners = relationship("User", back_populates="pharmacy")
@@ -73,11 +71,6 @@ class User(Base):
     pharmacy = relationship("Pharmacy", back_populates="owners")
 
     reviewed_prescriptions = relationship("Prescription", back_populates="reviewer")
-    handled_ai_interactions = relationship(
-        "AIInteraction",
-        back_populates="owner",
-        foreign_keys="AIInteraction.owner_id",
-    )
     handled_ai_interactions = relationship(
         "AIInteraction",
         back_populates="owner",
@@ -131,10 +124,6 @@ class Order(Base):
     customer_phone = Column(String, nullable=True)
     customer_address = Column(Text, nullable=True)
     customer_notes = Column(Text, nullable=True)
-    customer_name = Column(String, nullable=True)
-    customer_phone = Column(String, nullable=True)
-    customer_address = Column(Text, nullable=True)
-    customer_notes = Column(Text, nullable=True)
     status = Column(String, nullable=False, default="PENDING")
     payment_method = Column(String, nullable=False, default="COD")
     payment_status = Column(String, nullable=False, default="UNPAID")
@@ -170,8 +159,6 @@ class Prescription(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     file_path = Column(String, nullable=False)
-    original_filename = Column(String, nullable=True)
-    content_type = Column(String, nullable=True)
     original_filename = Column(String, nullable=True)
     content_type = Column(String, nullable=True)
     status = Column(String, nullable=False, default="PENDING")
@@ -282,7 +269,6 @@ class AIInteraction(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     customer_id = Column(String, nullable=False, index=True)
-    customer_id = Column(String, nullable=False, index=True)
     customer_query = Column(Text, nullable=False)
     ai_response = Column(Text, nullable=False)
     confidence_score = Column(Float, nullable=False)
@@ -291,18 +277,9 @@ class AIInteraction(Base):
     owner_reply = Column(Text, nullable=True)
     owner_replied_at = Column(DateTime, nullable=True)
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    owner_reply = Column(Text, nullable=True)
-    owner_replied_at = Column(DateTime, nullable=True)
-    owner_id = Column(Integer, ForeignKey("users.id"), nullable=True)
 
     pharmacy_id = Column(Integer, ForeignKey("pharmacies.id"), nullable=False)
     pharmacy = relationship("Pharmacy", back_populates="ai_interactions")
-    owner = relationship(
-        "User",
-        back_populates="handled_ai_interactions",
-        foreign_keys=[owner_id],
-    )
     owner = relationship(
         "User",
         back_populates="handled_ai_interactions",

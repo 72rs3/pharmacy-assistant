@@ -10,17 +10,10 @@ export default function Register() {
   const [password, setPassword] = useState("");
   const [pharmacyName, setPharmacyName] = useState("");
   const [pharmacyDomain, setPharmacyDomain] = useState("");
-  const [pharmacyDomain, setPharmacyDomain] = useState("");
   const [isOwner, setIsOwner] = useState(false);
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [error, setError] = useState("");
-  const [isSubmitting, setIsSubmitting] = useState(false);
   const navigate = useNavigate();
-
-  if (!isPortalHost()) {
-    return <Navigate to="/" replace />;
-  }
 
   if (!isPortalHost()) {
     return <Navigate to="/" replace />;
@@ -43,13 +36,7 @@ export default function Register() {
         full_name: fullName,
         pharmacy_name: isOwner ? pharmacyName : null,
         pharmacy_domain: isOwner ? pharmacyDomain || null : null,
-        pharmacy_domain: isOwner ? pharmacyDomain || null : null,
       });
-      navigate("/portal/login");
-    } catch (e) {
-      setError(e?.response?.data?.detail ?? "Registration failed");
-    } finally {
-      setIsSubmitting(false);
       navigate("/portal/login");
     } catch (e) {
       setError(e?.response?.data?.detail ?? "Registration failed");
@@ -166,4 +153,3 @@ export default function Register() {
     </form>
   );
 }
-
