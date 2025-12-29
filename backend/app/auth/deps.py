@@ -39,6 +39,15 @@ def require_admin(current_user: models.User = Depends(get_current_user)) -> mode
     return current_user
 
 
+def require_owner(current_user: models.User = Depends(get_current_user)) -> models.User:
+    if current_user.is_admin or current_user.pharmacy_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Pharmacy owner privileges required",
+        )
+    return current_user
+
+
 def require_pharmacy_owner(
     pharmacy_id: int = Depends(get_current_pharmacy_id),
     current_user: models.User = Depends(get_current_user),

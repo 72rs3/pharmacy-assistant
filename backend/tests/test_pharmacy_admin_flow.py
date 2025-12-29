@@ -56,14 +56,14 @@ def test_admin_can_approve_pending_pharmacy(client: TestClient):
         "password": "example-password",
         "full_name": "Owner One",
         "pharmacy_name": "Sunrise Pharmacy",
+        "pharmacy_domain": "sunrise.local",
     }
-    register_response = client.post("/auth/register", json=register_payload)
+    register_response = client.post("/auth/register-owner", json=register_payload)
     assert register_response.status_code == 200
 
-    # Public listing should not expose pending/inactive pharmacies
-    public_list = client.get("/pharmacies")
-    assert public_list.status_code == 200
-    assert public_list.json() == []
+    # Public tenant resolution should reject pending/inactive pharmacies
+    public_before = client.get("/pharmacies/current", headers={"X-Pharmacy-Domain": "sunrise.local"})
+    assert public_before.status_code == 404
 
     # Admin view sees the pending pharmacy
     admin_list = client.get("/pharmacies/admin")
@@ -81,9 +81,7 @@ def test_admin_can_approve_pending_pharmacy(client: TestClient):
     assert approved["status"] == "APPROVED"
     assert approved["is_active"] is True
 
-    # After approval the pharmacy appears in the public list
-    post_approval_list = client.get("/pharmacies")
-    assert post_approval_list.status_code == 200
-    visible = post_approval_list.json()
-    assert len(visible) == 1
-    assert visible[0]["id"] == pharmacy_id
+    # After approval the public tenant endpoint resolves successfully
+    public_after = client.get("/pharmacies/current", headers={"X-Pharmacy-Domain": "sunrise.local"})
+    assert public_after.status_code == 200
+    assert public_after.json()["id"] == pharmacy_id

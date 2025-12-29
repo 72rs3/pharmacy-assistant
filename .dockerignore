@@ -1,0 +1,22 @@
+.git/
+.pytest_cache/
+__pycache__/
+*.pyc
+
+venv/
+.venv/
+backend/venv/
+frontend/node_modules/
+
+*.db
+*.sqlite
+*.sqlite3
+
+.env
+.env.*
+
+dist/
+dist-ssr/
+*.log
+share.html
+ts and tenant deps*

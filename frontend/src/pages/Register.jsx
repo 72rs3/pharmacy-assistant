@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Navigate, useNavigate } from "react-router-dom";
 import api from "../api/axios";
+import { isPortalHost } from "../utils/tenant";
 
 export default function Register() {
   const [fullName, setFullName] = useState("");
@@ -9,10 +10,18 @@ export default function Register() {
   const [pharmacyName, setPharmacyName] = useState("");
   const [pharmacyDomain, setPharmacyDomain] = useState("");
   const [isOwner, setIsOwner] = useState(false);
+  const [error, setError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const navigate = useNavigate();
+
+  if (!isPortalHost()) {
+    return <Navigate to="/" replace />;
+  }
 
   const handleRegister = async (event) => {
     event.preventDefault();
+    setError("");
+    setIsSubmitting(true);
 
     try {
       const endpoint = isOwner ? "/auth/register-owner" : "/auth/register";
@@ -23,70 +32,122 @@ export default function Register() {
         pharmacy_name: isOwner ? pharmacyName : null,
         pharmacy_domain: isOwner ? pharmacyDomain || null : null,
       });
-      alert("Account created successfully!");
-      navigate("/login");
-    } catch (error) {
-      console.error(error.response?.data ?? error);
-      alert("Registration failed!");
+      navigate("/portal/login");
+    } catch (e) {
+      setError(e?.response?.data?.detail ?? "Registration failed");
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   return (
-    <form onSubmit={handleRegister}>
-      <h2>Register</h2>
+    <div className="container">
+      <div className="narrow">
+        <h1 className="page-title">Create an account</h1>
+        <p className="page-subtitle">
+          Register as an owner to create a pharmacy tenant. Admin approval is required before customers can see it.
+        </p>
 
-      <label>
-        <input
-          type="checkbox"
-          checked={isOwner}
-          onChange={(event) => setIsOwner(event.target.checked)}
-        />
-        Registering as pharmacy owner
-      </label>
+        <div className="card" style={{ marginTop: "1.25rem" }}>
+          <form className="form" onSubmit={handleRegister}>
+            {error ? <div className="alert alert-danger">{error}</div> : null}
 
-      <input
-        type="text"
-        placeholder="Full name"
-        value={fullName}
-        onChange={(event) => setFullName(event.target.value)}
-        required
-      />
+            <label className="inline" style={{ justifyContent: "space-between" }}>
+              <span className="label">Register as pharmacy owner</span>
+              <input type="checkbox" checked={isOwner} onChange={(event) => setIsOwner(event.target.checked)} />
+            </label>
 
-      <input
-        type="email"
-        placeholder="Email"
-        value={email}
-        onChange={(event) => setEmail(event.target.value)}
-        required
-      />
+            <div className="form-row">
+              <label className="label" htmlFor="fullName">
+                Full name
+              </label>
+              <input
+                id="fullName"
+                className="input"
+                type="text"
+                value={fullName}
+                onChange={(event) => setFullName(event.target.value)}
+                required
+                autoComplete="name"
+              />
+            </div>
 
-      <input
-        type="password"
-        placeholder="Password"
-        value={password}
-        onChange={(event) => setPassword(event.target.value)}
-        required
-      />
+            <div className="form-row">
+              <label className="label" htmlFor="email">
+                Email
+              </label>
+              <input
+                id="email"
+                className="input"
+                type="email"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                required
+                autoComplete="email"
+              />
+            </div>
 
-      {isOwner && (
-        <>
-          <input
-            type="text"
-            placeholder="Pharmacy name"
-            value={pharmacyName}
-            onChange={(event) => setPharmacyName(event.target.value)}
-            required
-          />
-          <input
-            type="text"
-            placeholder="Pharmacy domain (optional, e.g. sunrise.local)"
-            value={pharmacyDomain}
-            onChange={(event) => setPharmacyDomain(event.target.value)}
-          />
-        </>
-      )}
+            <div className="form-row">
+              <label className="label" htmlFor="password">
+                Password
+              </label>
+              <input
+                id="password"
+                className="input"
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                required
+                autoComplete="new-password"
+              />
+            </div>
 
-      <button type="submit">Register</button>
-    </form>
+            {isOwner ? (
+              <>
+                <div className="form-row">
+                  <label className="label" htmlFor="pharmacyName">
+                    Pharmacy name
+                  </label>
+                  <input
+                    id="pharmacyName"
+                    className="input"
+                    type="text"
+                    value={pharmacyName}
+                    onChange={(event) => setPharmacyName(event.target.value)}
+                    required
+                  />
+                </div>
+
+                <div className="form-row">
+                  <label className="label" htmlFor="pharmacyDomain">
+                    Pharmacy domain
+                  </label>
+                  <input
+                    id="pharmacyDomain"
+                    className="input"
+                    type="text"
+                    placeholder="e.g., sunrise.localhost"
+                    value={pharmacyDomain}
+                    onChange={(event) => setPharmacyDomain(event.target.value)}
+                    required
+                  />
+                  <div className="help">
+                    Recommended for local testing: use a <code>*.localhost</code> domain (example:{" "}
+                    <code>sunrise.localhost</code>).
+                  </div>
+                </div>
+              </>
+            ) : null}
+
+            <div className="actions">
+              <button className="btn btn-primary" type="submit" disabled={isSubmitting}>
+                {isSubmitting ? "Creating..." : "Register"}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
   );
 }
+

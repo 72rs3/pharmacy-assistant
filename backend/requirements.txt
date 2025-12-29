@@ -9,6 +9,7 @@ python-dotenv==1.0.1
 python-jose[cryptography]
 bcrypt==5.0.0
 email-validator
+python-multipart==0.0.21
 
 # Tests
 pytest==9.0.2

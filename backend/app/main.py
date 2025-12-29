@@ -11,6 +11,14 @@ from app.auth.routes import router as auth_router
 from app.auth.bootstrap import ensure_admin_user
 from app.routes.pharmacy_routes import router as pharmacy_router
 from app.routes.medicine_routes import router as medicine_router
+from app.routes.order_routes import router as order_router
+from app.routes.prescription_routes import router as prescription_router
+from app.routes.appointment_routes import router as appointment_router
+
+def _split_csv(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [part.strip() for part in value.split(",") if part.strip()]
 
 def _env_flag(name: str, *, default: bool) -> bool:
     raw = os.getenv(name)
@@ -65,10 +73,18 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="AI-Powered Pharmacy Assistant Backend", lifespan=lifespan)
 
-# Allow local frontend to access the API
+cors_origins = _split_csv(os.getenv("CORS_ORIGINS")) or [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+cors_origin_regex = os.getenv("CORS_ALLOW_ORIGIN_REGEX") or r"^https?://([a-z0-9-]+\.)*localhost(:\d+)?$"
+# `.env` files often double-escape backslashes (e.g. `\\d` instead of `\d`); normalize so CORS preflight works.
+cors_origin_regex = cors_origin_regex.replace("\\\\", "\\")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=cors_origins,
+    allow_origin_regex=cors_origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -77,6 +93,9 @@ app.add_middleware(
 app.include_router(auth_router, prefix="/auth", tags=["Auth"])
 app.include_router(pharmacy_router)
 app.include_router(medicine_router)
+app.include_router(order_router)
+app.include_router(prescription_router)
+app.include_router(appointment_router)
 
 
 @app.get("/")

@@ -12,6 +12,11 @@ services:
       - "${POSTGRES_PORT:-15432}:5432"
     volumes:
       - pharmacy_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
 
   pgadmin:
     profiles: ["tools"]
@@ -24,6 +29,48 @@ services:
       - "${PGADMIN_PORT:-5050}:80"
     depends_on:
       - db
+
+  backend:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-pharmacy}:${POSTGRES_PASSWORD:-pharmacy}@db:5432/${POSTGRES_DB:-pharmacy}
+      DB_AUTO_CREATE: ${DB_AUTO_CREATE:-0}
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-change-me}
+      PHARMACY_ADMIN_EMAIL: ${PHARMACY_ADMIN_EMAIL:-}
+      PHARMACY_ADMIN_PASSWORD: ${PHARMACY_ADMIN_PASSWORD:-}
+      PHARMACY_ADMIN_FULL_NAME: ${PHARMACY_ADMIN_FULL_NAME:-Admin}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+      CORS_ALLOW_ORIGIN_REGEX: ${CORS_ALLOW_ORIGIN_REGEX:-^https?://([a-z0-9-]+\.)*localhost(:\d+)?$}
+    ports:
+      - "${BACKEND_PORT:-9000}:9000"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./backend/app:/app/app
+      - ./backend/main.py:/app/main.py
+      - ./backend/alembic:/app/alembic
+      - ./backend/alembic.ini:/app/alembic.ini
+
+  frontend:
+    build:
+      context: ./frontend
+    restart: unless-stopped
+    environment:
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:9000}
+      VITE_PORTAL_HOSTS: ${VITE_PORTAL_HOSTS:-localhost,127.0.0.1,::1}
+    ports:
+      - "${FRONTEND_PORT:-5173}:5173"
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+      - ./frontend/index.html:/app/index.html
+      - ./frontend/vite.config.js:/app/vite.config.js
+      - ./frontend/eslint.config.js:/app/eslint.config.js
 
 volumes:
   pharmacy_pgdata:

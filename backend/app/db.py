@@ -99,6 +99,20 @@ def ensure_sqlite_schema(db_engine: Engine) -> None:
                     "UPDATE medicines SET stock_level = quantity WHERE stock_level IS NULL AND quantity IS NOT NULL"
                 )
 
+        if "orders" in tables:
+            add_column_if_missing("orders", "customer_name", "customer_name VARCHAR")
+            add_column_if_missing("orders", "customer_phone", "customer_phone VARCHAR")
+            add_column_if_missing("orders", "customer_address", "customer_address TEXT")
+            add_column_if_missing("orders", "customer_notes", "customer_notes TEXT")
+
+        if "prescriptions" in tables:
+            add_column_if_missing("prescriptions", "original_filename", "original_filename VARCHAR")
+            add_column_if_missing("prescriptions", "content_type", "content_type VARCHAR")
+
+        if "appointments" in tables:
+            add_column_if_missing("appointments", "customer_name", "customer_name VARCHAR")
+            add_column_if_missing("appointments", "customer_phone", "customer_phone VARCHAR")
+
 
 def get_db():
     db = SessionLocal()

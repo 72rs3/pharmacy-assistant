@@ -10,10 +10,8 @@ export default function AdminPharmacies() {
     setIsLoading(true);
     setError("");
     try {
-      const response = await api.get("/pharmacies/admin", {
-        params: { status: "PENDING" },
-      });
-      setPharmacies(response.data);
+      const res = await api.get("/pharmacies/admin");
+      setPharmacies(res.data ?? []);
     } catch (e) {
       setError(e?.response?.data?.detail ?? "Failed to load pharmacies");
     } finally {
@@ -26,40 +24,55 @@ export default function AdminPharmacies() {
   }, []);
 
   const approve = async (pharmacyId) => {
+    setError("");
     try {
       await api.post(`/pharmacies/${pharmacyId}/approve`);
       await load();
     } catch (e) {
-      setError(e?.response?.data?.detail ?? "Approval failed");
+      setError(e?.response?.data?.detail ?? "Failed to approve pharmacy");
     }
   };
 
-  if (isLoading && pharmacies.length === 0) {
-    return <div style={{ padding: "1rem" }}>Loading...</div>;
-  }
-
   return (
-    <div style={{ padding: "1rem" }}>
-      <h2>Pending Pharmacies</h2>
-      {error ? <p style={{ color: "crimson" }}>{error}</p> : null}
+    <div className="container">
+      <div className="section-header">
+        <div>
+          <h1 className="page-title">Admin: pharmacies</h1>
+          <p className="page-subtitle">Approve pharmacy tenants to make them visible to customers.</p>
+        </div>
+        <button type="button" className="btn btn-ghost" onClick={load} disabled={isLoading}>
+          {isLoading ? "Refreshing..." : "Refresh"}
+        </button>
+      </div>
 
-      {pharmacies.length === 0 ? (
-        <p>No pending pharmacies.</p>
-      ) : (
-        <ul>
-          {pharmacies.map((pharmacy) => (
-            <li key={pharmacy.id} style={{ marginBottom: "0.75rem" }}>
-              <div>
-                <strong>{pharmacy.name}</strong> (id: {pharmacy.id}) -{" "}
-                {pharmacy.status} / {pharmacy.is_active ? "active" : "inactive"}
-              </div>
-              <button type="button" onClick={() => approve(pharmacy.id)}>
-                Approve
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
+      {error ? <div className="alert alert-danger" style={{ marginTop: "1rem" }}>{error}</div> : null}
+
+      <div className="stack" style={{ marginTop: "1rem" }}>
+        {pharmacies.map((pharmacy) => {
+          const approved = pharmacy.status === "APPROVED" && pharmacy.is_active;
+          return (
+            <section key={pharmacy.id} className="card reveal">
+              <header className="card-header">
+                <div>
+                  <h2 className="card-title">{pharmacy.name}</h2>
+                  <p className="card-description">
+                    {pharmacy.domain ? `Domain: ${pharmacy.domain}` : "No domain configured"} ·{" "}
+                    {approved ? "Approved" : "Pending"}
+                  </p>
+                </div>
+                {approved ? (
+                  <span className="badge badge-success">Approved</span>
+                ) : (
+                  <button type="button" className="btn btn-primary" onClick={() => approve(pharmacy.id)}>
+                    Approve
+                  </button>
+                )}
+              </header>
+            </section>
+          );
+        })}
+      </div>
     </div>
   );
 }
+
