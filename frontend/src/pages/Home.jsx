@@ -1,871 +1,417 @@
-import { useEffect, useMemo, useState } from "react";
-import { Navigate } from "react-router-dom";
-import api from "../api/axios";
+import { Navigate, Link } from "react-router-dom";
+import { Clock, Heart, Pill, Shield } from "lucide-react";
 import { useTenant } from "../context/TenantContext";
 import { isPortalHost } from "../utils/tenant";
 
-const ORDER_TRACKING_KEY = "customer_order_tracking";
-const APPOINTMENT_TRACKING_KEY = "customer_appointment_tracking";
-const CHAT_ID_KEY = "customer_chat_id";
+const features = [
+  {
+    title: "Quality Medications",
+    description: "Wide selection of authentic medicines from trusted brands",
+    icon: Pill,
+    tone: "blue",
+  },
+  {
+    title: "Expert Care",
+    description: "Professional pharmacists ready to assist you",
+    icon: Heart,
+    tone: "green",
+  },
+  {
+    title: "Safe & Secure",
+    description: "Your health data is protected with highest security",
+    icon: Shield,
+    tone: "purple",
+  },
+  {
+    title: "Fast Service",
+    description: "Quick prescription filling and home delivery",
+    icon: Clock,
+    tone: "orange",
+  },
+];
 
-const formatDate = (value) => {
-  if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value);
-  return date.toLocaleString();
+const toneStyles = {
+  blue: "bg-blue-100 text-blue-600",
+  green: "bg-green-100 text-green-600",
+  purple: "bg-purple-100 text-purple-600",
+  orange: "bg-orange-100 text-orange-600",
 };
 
 export default function Home() {
-  if (isPortalHost()) {
+  const portalHost = isPortalHost();
+
+  const { pharmacy } = useTenant() ?? {};
+  const brandName = pharmacy?.name ?? "Sunr";
+  const theme = String(pharmacy?.theme_preset ?? "classic").toLowerCase();
+  const layout = String(pharmacy?.storefront_layout ?? "classic").toLowerCase();
+  const heroImage =
+    pharmacy?.hero_image_url ||
+    "https://images.unsplash.com/photo-1582146804102-b4a01b0a51ae?auto=format&fit=crop&w=1080&q=80";
+  const secondaryImage =
+    pharmacy?.branding_details
+      ? "https://images.unsplash.com/photo-1576669801945-7a346954da5a?auto=format&fit=crop&w=1080&q=80"
+      : "https://images.unsplash.com/photo-1576669801945-7a346954da5a?auto=format&fit=crop&w=1080&q=80";
+
+  if (portalHost) {
     return <Navigate to="/portal" replace />;
   }
 
-  const { pharmacy, isLoadingTenant, tenantError, reloadTenant } = useTenant() ?? {};
-  const [medicines, setMedicines] = useState([]);
-  const [search, setSearch] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
-  const [medicineError, setMedicineError] = useState("");
-
-  const [cart, setCart] = useState([]);
-  const [checkout, setCheckout] = useState({
-    name: "",
-    phone: "",
-    address: "",
-    notes: "",
-  });
-  const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
-  const [orderError, setOrderError] = useState("");
-  const [orderSuccess, setOrderSuccess] = useState(null);
-  const [requiresPrescription, setRequiresPrescription] = useState(false);
-
-  const [orderTrackingCode, setOrderTrackingCode] = useState(() =>
-    typeof window !== "undefined" ? localStorage.getItem(ORDER_TRACKING_KEY) ?? "" : ""
-  );
-  const [orders, setOrders] = useState([]);
-  const [ordersError, setOrdersError] = useState("");
-  const [ordersLoading, setOrdersLoading] = useState(false);
-  const [selectedOrder, setSelectedOrder] = useState(null);
-  const [orderDetailError, setOrderDetailError] = useState("");
-
-  const [prescriptionOrderId, setPrescriptionOrderId] = useState("");
-  const [prescriptionFile, setPrescriptionFile] = useState(null);
-  const [prescriptionStatus, setPrescriptionStatus] = useState("");
-  const [prescriptionError, setPrescriptionError] = useState("");
-
-  const [appointmentForm, setAppointmentForm] = useState({
-    name: "",
-    phone: "",
-    type: "Vaccination",
-    scheduledTime: "",
-    vaccineName: "",
-  });
-  const [appointmentTrackingCode, setAppointmentTrackingCode] = useState(() =>
-    typeof window !== "undefined" ? localStorage.getItem(APPOINTMENT_TRACKING_KEY) ?? "" : ""
-  );
-  const [appointmentSuccess, setAppointmentSuccess] = useState("");
-  const [appointmentError, setAppointmentError] = useState("");
-  const [appointments, setAppointments] = useState([]);
-  const [appointmentsLoading, setAppointmentsLoading] = useState(false);
-
-  const [chatId, setChatId] = useState(() =>
-    typeof window !== "undefined" ? localStorage.getItem(CHAT_ID_KEY) ?? "" : ""
-  );
-  const [chatMessages, setChatMessages] = useState([]);
-  const [chatInput, setChatInput] = useState("");
-  const [chatLoading, setChatLoading] = useState(false);
-  const [chatError, setChatError] = useState("");
-
-  const hasMedicines = medicines.length > 0;
-  const inventoryEmpty = !isLoading && medicines.length === 0 && !medicineError;
-
-  const filteredMedicines = useMemo(() => {
-    const query = search.trim().toLowerCase();
-    if (!query) return medicines;
-
-    return medicines.filter((medicine) => {
-      const name = medicine?.name?.toLowerCase() ?? "";
-      const category = medicine?.category?.toLowerCase() ?? "";
-      return name.includes(query) || category.includes(query);
-    });
-  }, [medicines, search]);
-
-  const cartTotal = useMemo(() => {
-    return cart.reduce((sum, item) => sum + item.quantity * item.price, 0);
-  }, [cart]);
-
-  const stockBadge = (medicine) => {
-    const stock = Number(medicine?.stock_level ?? 0);
-    if (!Number.isFinite(stock) || stock <= 0) {
-      return <span className="badge badge-danger">Out of stock</span>;
-    }
-    if (stock <= 5) {
-      return <span className="badge badge-warning">Low stock</span>;
-    }
-    return <span className="badge badge-success">In stock</span>;
-  };
-
-  const loadMedicines = async () => {
-    setIsLoading(true);
-    setMedicineError("");
-    try {
-      const medicinesRes = await api.get("/medicines/");
-      setMedicines(medicinesRes.data ?? []);
-    } catch (e) {
-      setMedicines([]);
-      setMedicineError(e?.response?.data?.detail ?? "Failed to load medicines");
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    if (!pharmacy) return;
-    loadMedicines();
-  }, [pharmacy?.name]);
-
-  const addToCart = (medicine) => {
-    setCart((prev) => {
-      const existing = prev.find((item) => item.id === medicine.id);
-      if (existing) {
-        return prev.map((item) => (item.id === medicine.id ? { ...item, quantity: item.quantity + 1 } : item));
-      }
-      return [...prev, { id: medicine.id, name: medicine.name, price: medicine.price, quantity: 1 }];
-    });
-  };
-
-  const updateCartQuantity = (medicineId, quantity) => {
-    if (quantity <= 0) {
-      setCart((prev) => prev.filter((item) => item.id !== medicineId));
-      return;
-    }
-    setCart((prev) => prev.map((item) => (item.id === medicineId ? { ...item, quantity } : item)));
-  };
-
-  const loadOrders = async (tracking) => {
-    const code = tracking?.trim();
-    if (!code) {
-      setOrders([]);
-      return;
-    }
-
-    setOrdersLoading(true);
-    setOrdersError("");
-    try {
-      const res = await api.get("/orders/my", {
-        headers: { "X-Customer-ID": code },
-      });
-      setOrders(res.data ?? []);
-    } catch (err) {
-      setOrders([]);
-      setOrdersError(err?.response?.data?.detail ?? "Failed to load orders");
-    } finally {
-      setOrdersLoading(false);
-    }
-  };
-
-  const handleCheckout = async (event) => {
-    event.preventDefault();
-    setOrderError("");
-    setOrderSuccess(null);
-    setRequiresPrescription(false);
-
-    if (!cart.length) {
-      setOrderError("Add at least one medicine to the cart.");
-      return;
-    }
-
-    if (!pharmacy?.support_cod) {
-      setOrderError("This pharmacy is not accepting cash on delivery right now.");
-      return;
-    }
-
-    setIsSubmittingOrder(true);
-    try {
-      const payload = {
-        customer_name: checkout.name,
-        customer_phone: checkout.phone,
-        customer_address: checkout.address,
-        customer_notes: checkout.notes || null,
-        items: cart.map((item) => ({
-          medicine_id: item.id,
-          quantity: item.quantity,
-        })),
-      };
-      const res = await api.post("/orders", payload);
-      setOrderSuccess(res.data);
-      setRequiresPrescription(Boolean(res.data?.requires_prescription));
-      setCart([]);
-      if (res.data?.tracking_code) {
-        setOrderTrackingCode(res.data.tracking_code);
-        if (typeof window !== "undefined") {
-          localStorage.setItem(ORDER_TRACKING_KEY, res.data.tracking_code);
-        }
-      }
-      if (res.data?.order_id) {
-        setPrescriptionOrderId(String(res.data.order_id));
-      }
-      await loadOrders(res.data?.tracking_code ?? orderTrackingCode);
-    } catch (err) {
-      setOrderError(err?.response?.data?.detail ?? "Checkout failed");
-    } finally {
-      setIsSubmittingOrder(false);
-    }
-  };
-
-  const handleOrderLookup = async () => {
-    if (!orderTrackingCode.trim()) {
-      setOrdersError("Enter a tracking code to view orders.");
-      return;
-    }
-    if (typeof window !== "undefined") {
-      localStorage.setItem(ORDER_TRACKING_KEY, orderTrackingCode.trim());
-    }
-    await loadOrders(orderTrackingCode);
-  };
-
-  const loadOrderDetail = async (orderId) => {
-    setOrderDetailError("");
-    setSelectedOrder(null);
-    try {
-      const res = await api.get(`/orders/${orderId}`, {
-        headers: { "X-Customer-ID": orderTrackingCode },
-      });
-      setSelectedOrder(res.data);
-    } catch (err) {
-      setOrderDetailError(err?.response?.data?.detail ?? "Unable to load order details");
-    }
-  };
-
-  const uploadPrescription = async (event) => {
-    event.preventDefault();
-    setPrescriptionError("");
-    setPrescriptionStatus("");
-    if (!prescriptionOrderId || !prescriptionFile) {
-      setPrescriptionError("Provide an order ID and prescription file.");
-      return;
-    }
-
-    const formData = new FormData();
-    formData.append("order_id", prescriptionOrderId);
-    formData.append("file", prescriptionFile);
-
-    try {
-      const res = await api.post("/prescriptions/upload", formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
-      setPrescriptionStatus(`Uploaded. Status: ${res.data?.status ?? "PENDING"}`);
-    } catch (err) {
-      setPrescriptionError(err?.response?.data?.detail ?? "Upload failed");
-    }
-  };
-
-  const loadAppointments = async (tracking) => {
-    const code = tracking?.trim();
-    if (!code) {
-      setAppointments([]);
-      return;
-    }
-
-    setAppointmentsLoading(true);
-    setAppointmentError("");
-    try {
-      const res = await api.get("/appointments/my", {
-        headers: { "X-Customer-ID": code },
-      });
-      setAppointments(res.data ?? []);
-    } catch (err) {
-      setAppointments([]);
-      setAppointmentError(err?.response?.data?.detail ?? "Failed to load appointments");
-    } finally {
-      setAppointmentsLoading(false);
-    }
-  };
-
-  const bookAppointment = async (event) => {
-    event.preventDefault();
-    setAppointmentError("");
-    setAppointmentSuccess("");
-
-    if (!appointmentForm.scheduledTime) {
-      setAppointmentError("Pick a time for your appointment.");
-      return;
-    }
-
-    try {
-      const payload = {
-        customer_name: appointmentForm.name,
-        customer_phone: appointmentForm.phone,
-        type: appointmentForm.type,
-        scheduled_time: new Date(appointmentForm.scheduledTime).toISOString(),
-        vaccine_name: appointmentForm.vaccineName || null,
-      };
-      const res = await api.post("/appointments", payload);
-      if (res.data?.tracking_code) {
-        setAppointmentTrackingCode(res.data.tracking_code);
-        if (typeof window !== "undefined") {
-          localStorage.setItem(APPOINTMENT_TRACKING_KEY, res.data.tracking_code);
-        }
-        setAppointmentSuccess(`Booked. Tracking code: ${res.data.tracking_code}`);
-      } else {
-        setAppointmentSuccess("Booked. Keep your tracking code from the confirmation message.");
-      }
-      setAppointmentForm((prev) => ({ ...prev, scheduledTime: "" }));
-      await loadAppointments(res.data?.tracking_code ?? appointmentTrackingCode);
-    } catch (err) {
-      setAppointmentError(err?.response?.data?.detail ?? "Booking failed");
-    }
-  };
-
-  const handleAppointmentLookup = async () => {
-    if (!appointmentTrackingCode.trim()) {
-      setAppointmentError("Enter a tracking code to view appointments.");
-      return;
-    }
-    if (typeof window !== "undefined") {
-      localStorage.setItem(APPOINTMENT_TRACKING_KEY, appointmentTrackingCode.trim());
-    }
-    await loadAppointments(appointmentTrackingCode);
-  };
-
-  const loadChatHistory = async (existingChatId) => {
-    const code = (existingChatId ?? chatId).trim();
-    if (!code) {
-      setChatMessages([]);
-      return;
-    }
-
-    setChatLoading(true);
-    setChatError("");
-    try {
-      const res = await api.get("/ai/chat/my", {
-        headers: { "X-Chat-ID": code },
-      });
-      setChatMessages(res.data ?? []);
-    } catch (err) {
-      setChatMessages([]);
-      setChatError(err?.response?.data?.detail ?? "Failed to load chat");
-    } finally {
-      setChatLoading(false);
-    }
-  };
-
-  const sendChat = async (event) => {
-    event.preventDefault();
-    const message = chatInput.trim();
-    if (!message) return;
-
-    setChatLoading(true);
-    setChatError("");
-    try {
-      const res = await api.post(
-        "/ai/chat",
-        { message },
-        {
-          headers: chatId ? { "X-Chat-ID": chatId } : {},
-        }
-      );
-
-      const nextChatId = res.data?.customer_id ?? chatId;
-      if (nextChatId && nextChatId !== chatId) {
-        setChatId(nextChatId);
-        if (typeof window !== "undefined") {
-          localStorage.setItem(CHAT_ID_KEY, nextChatId);
-        }
-      }
-
-      setChatInput("");
-      await loadChatHistory(nextChatId);
-    } catch (err) {
-      setChatError(err?.response?.data?.detail ?? "Failed to send message");
-    } finally {
-      setChatLoading(false);
-    }
-  };
-
-  const startNewChat = () => {
-    setChatId("");
-    setChatMessages([]);
-    setChatError("");
-    setChatInput("");
-    if (typeof window !== "undefined") {
-      localStorage.removeItem(CHAT_ID_KEY);
-    }
-  };
-
-  useEffect(() => {
-    if (!pharmacy) return;
-    if (!chatId) return;
-    loadChatHistory(chatId);
-  }, [pharmacy?.id, chatId]);
-
-  useEffect(() => {
-    if (!pharmacy || !chatId) return;
-
-    const interval = setInterval(() => {
-      const hasPending = (chatMessages ?? []).some((m) => m.escalated_to_human && !m.owner_reply);
-      if (hasPending) loadChatHistory(chatId);
-    }, 6000);
-
-    return () => clearInterval(interval);
-  }, [pharmacy?.id, chatId, chatMessages]);
-
   if (!pharmacy) {
     return (
-      <div className="container">
-        <h1 className="page-title">Pharmacy not available</h1>
-        <p className="page-subtitle">This pharmacy could not be found or is not yet approved.</p>
-
-        <div className="card" style={{ marginTop: "1.25rem" }}>
-          <header className="card-header">
-            <div>
-              <h2 className="card-title">Try again</h2>
-              <p className="card-description">
-                Check the pharmacy address and try again. If you are staff, use the portal on{" "}
-                <span className="badge">localhost</span>.
-              </p>
-            </div>
-            <button type="button" className="btn btn-ghost" onClick={reloadTenant} disabled={Boolean(isLoadingTenant)}>
-              {isLoadingTenant ? "Retrying..." : "Retry"}
-            </button>
-          </header>
-
-          {tenantError ? <div className="alert alert-danger">{tenantError}</div> : null}
-        </div>
+      <div className="bg-white rounded-2xl p-8 shadow-md">
+        <h1 className="text-3xl text-gray-900 mb-3">Pharmacy not available</h1>
+        <p className="text-gray-600">
+          This pharmacy could not be found or is not yet approved. Please check the domain.
+        </p>
       </div>
     );
   }
 
-  return (
-    <div className="container">
-      <section className="hero reveal">
-        <div>
-          <h1 className="hero-title">{pharmacy.name}</h1>
-          <p className="hero-subtitle">
-            Browse medicines, place a cash-on-delivery order, upload prescriptions, or book a vaccine appointment.
+  const isGlass = theme === "glass";
+  const isNeumorph = theme === "neumorph";
+  const isMinimal = theme === "minimal";
+  const featureCardClass = isGlass
+    ? "bg-white/70 backdrop-blur border border-white/70 shadow-lg"
+    : isNeumorph
+      ? "bg-slate-100 border border-slate-200 shadow-[inset_-12px_-12px_24px_rgba(255,255,255,0.85),inset_12px_12px_24px_rgba(15,23,42,0.12)]"
+      : "bg-white shadow-md";
+
+  const renderClassicHero = () => (
+    <section className="relative bg-gradient-to-br from-amber-50 to-sky-50 rounded-3xl overflow-hidden shadow-sm border border-white">
+      <div className="grid md:grid-cols-2 gap-8 items-center p-8 md:p-16">
+        <div className="space-y-6">
+          <h1 className="text-5xl md:text-6xl text-gray-900">
+            Your Health,
+            <br />
+            <span className="text-[var(--brand-accent)]">Our Priority</span>
+          </h1>
+          <p className="text-xl text-gray-600">
+            {brandName} - Your trusted partner for wellness and healthcare solutions.
           </p>
-          <div className="hero-badges">
-            <span className="badge badge-success">{pharmacy.support_cod ? "COD available" : "COD unavailable"}</span>
-            {pharmacy.operating_hours ? <span className="badge">Hours: {pharmacy.operating_hours}</span> : null}
+          <div className="flex flex-wrap gap-4">
+            <Link
+              to="/shop"
+              className="px-6 py-3 bg-[var(--brand-accent)] text-white rounded-lg hover:opacity-95 transition-colors shadow-md"
+            >
+              Shop Now
+            </Link>
+            <Link
+              to="/appointments"
+              className="px-6 py-3 border-2 border-[var(--brand-accent)] text-[var(--brand-accent)] rounded-lg hover:bg-[var(--brand-accent)] hover:text-white transition-colors"
+            >
+              Book Appointment
+            </Link>
+          </div>
+
+          <div className="inline-flex items-start gap-3 bg-[#e7f6df] border border-[#cdeec0] rounded-xl px-4 py-3 shadow-sm max-w-md">
+            <div className="w-9 h-9 rounded-lg bg-[var(--brand-primary)] text-white grid place-items-center shrink-0">
+              <Pill className="w-5 h-5" />
+            </div>
+            <p className="text-sm text-gray-700 leading-relaxed">
+              Yes! We have common OTC medicines available. Ask the assistant about price, stock, or prescription
+              requirements.
+            </p>
           </div>
         </div>
-        <div className="hero-card">
-          <h2 className="card-title">About this pharmacy</h2>
-          <p className="help">{pharmacy.branding_details || "This pharmacy has not added additional details yet."}</p>
+
+        <div className="relative h-96">
+          <img src={heroImage} alt="Pharmacy hero" className="w-full h-full object-cover rounded-2xl shadow-xl" />
+        </div>
+      </div>
+    </section>
+  );
+
+  const renderBreezeHero = () => (
+    <section className="relative rounded-3xl overflow-hidden shadow-sm border border-white bg-white">
+      <div className="grid lg:grid-cols-[1.2fr_1fr] gap-10 items-center p-8 md:p-16">
+        <div className="space-y-6">
+          <span className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-emerald-100 text-emerald-700 text-sm">
+            Friendly care, every day
+          </span>
+          <h1 className="text-5xl md:text-6xl text-gray-900">
+            {brandName}
+            <br />
+            <span className="text-[var(--brand-accent)]">Wellness Hub</span>
+          </h1>
+          <p className="text-lg text-gray-600">
+            Quick advice, trusted products, and personalized pharmacy support in one place.
+          </p>
+          <div className="flex flex-wrap gap-4">
+            <Link
+              to="/shop"
+              className="px-6 py-3 bg-[var(--brand-accent)] text-white rounded-lg hover:opacity-95 transition-colors shadow-md"
+            >
+              Explore Shop
+            </Link>
+            <Link
+              to="/contact"
+              className="px-6 py-3 border-2 border-[var(--brand-accent)] text-[var(--brand-accent)] rounded-lg hover:bg-[var(--brand-accent)] hover:text-white transition-colors"
+            >
+              Contact Us
+            </Link>
+          </div>
+          <div className="grid sm:grid-cols-2 gap-4">
+            <div className="bg-slate-50 rounded-xl border border-slate-100 p-4">
+              <div className="text-sm text-gray-600">Same day support</div>
+              <div className="text-lg text-gray-900">Chat with our team</div>
+            </div>
+            <div className="bg-slate-50 rounded-xl border border-slate-100 p-4">
+              <div className="text-sm text-gray-600">Appointments</div>
+              <div className="text-lg text-gray-900">Book in minutes</div>
+            </div>
+          </div>
+        </div>
+        <div className="relative">
+          <img src={heroImage} alt="Pharmacy hero" className="w-full h-[420px] object-cover rounded-2xl shadow-xl" />
+        </div>
+      </div>
+    </section>
+  );
+
+  const renderStudioHero = () => (
+    <section className="relative rounded-3xl overflow-hidden border border-slate-200 bg-white shadow-sm">
+      <div className="grid lg:grid-cols-2 gap-8 items-center p-8 md:p-16">
+        <div className="space-y-6">
+          <div className="text-sm uppercase tracking-widest text-slate-400">Pharmacy studio</div>
+          <h1 className="text-5xl md:text-6xl text-gray-900">
+            Precision care
+            <br />
+            <span className="text-[var(--brand-accent)]">Built around you</span>
+          </h1>
+          <p className="text-lg text-gray-600">
+            Designed for clarity and guidance, with experts ready to help you every step.
+          </p>
+          <div className="flex flex-wrap gap-4">
+            <Link
+              to="/appointments"
+              className="px-6 py-3 bg-[var(--brand-accent)] text-white rounded-lg hover:opacity-95 transition-colors shadow-md"
+            >
+              Book a visit
+            </Link>
+            <Link
+              to="/shop"
+              className="px-6 py-3 border-2 border-[var(--brand-accent)] text-[var(--brand-accent)] rounded-lg hover:bg-[var(--brand-accent)] hover:text-white transition-colors"
+            >
+              Browse products
+            </Link>
+          </div>
+        </div>
+        <div className="relative h-[420px]">
+          <img src={heroImage} alt="Pharmacy hero" className="w-full h-full object-cover rounded-2xl shadow-xl" />
+        </div>
+      </div>
+    </section>
+  );
+
+  const renderMarketHero = () => (
+    <section className="relative rounded-3xl overflow-hidden border border-slate-200 bg-white shadow-sm">
+      <div className="grid lg:grid-cols-[1fr_1.2fr] gap-8 items-center p-8 md:p-16">
+        <div className="space-y-6">
+          <span className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-blue-100 text-blue-700 text-sm">
+            Product first storefront
+          </span>
+          <h1 className="text-5xl md:text-6xl text-gray-900">
+            Stocked for
+            <br />
+            <span className="text-[var(--brand-accent)]">everyday needs</span>
+          </h1>
+          <p className="text-lg text-gray-600">
+            Discover fast-moving essentials, wellness supplies, and curated product bundles.
+          </p>
+          <div className="flex flex-wrap gap-4">
+            <Link
+              to="/shop"
+              className="px-6 py-3 bg-[var(--brand-accent)] text-white rounded-lg hover:opacity-95 transition-colors shadow-md"
+            >
+              Start shopping
+            </Link>
+            <Link
+              to="/orders"
+              className="px-6 py-3 border-2 border-[var(--brand-accent)] text-[var(--brand-accent)] rounded-lg hover:bg-[var(--brand-accent)] hover:text-white transition-colors"
+            >
+              Track order
+            </Link>
+          </div>
+        </div>
+        <div className="grid sm:grid-cols-2 gap-4">
+          <div className="rounded-2xl overflow-hidden shadow-md">
+            <img src={heroImage} alt="Pharmacy hero" className="w-full h-56 object-cover" />
+          </div>
+          <div className="rounded-2xl overflow-hidden shadow-md">
+            <img src={secondaryImage} alt="Pharmacy interior" className="w-full h-56 object-cover" />
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+
+  const renderGlassHero = () => (
+    <section className="relative rounded-[32px] overflow-hidden border border-white/60 bg-white/70 backdrop-blur shadow-xl">
+      <div className="grid lg:grid-cols-[1.1fr_0.9fr] gap-10 items-center p-8 md:p-16">
+        <div className="space-y-6">
+          <span className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/70 text-slate-700 text-sm border border-white/80">
+            Premium pharmacy experience
+          </span>
+          <h1 className="text-5xl md:text-6xl text-slate-900">
+            {brandName}
+            <br />
+            <span className="text-[var(--brand-accent)]">Glass clinic</span>
+          </h1>
+          <p className="text-lg text-slate-600">
+            A serene, modern storefront with transparent touches and smooth interactions.
+          </p>
+          <div className="flex flex-wrap gap-4">
+            <Link
+              to="/shop"
+              className="px-6 py-3 bg-[var(--brand-accent)] text-white rounded-full hover:opacity-95 transition-colors shadow-lg"
+            >
+              Explore products
+            </Link>
+            <Link
+              to="/contact"
+              className="px-6 py-3 border border-white/80 text-slate-700 rounded-full hover:bg-white/80 transition-colors"
+            >
+              Get in touch
+            </Link>
+          </div>
+          <div className="grid sm:grid-cols-2 gap-4">
+            <div className="rounded-2xl border border-white/80 bg-white/70 p-4">
+              <div className="text-sm text-slate-600">Live assistance</div>
+              <div className="text-lg text-slate-900">Chat with a pharmacist</div>
+            </div>
+            <div className="rounded-2xl border border-white/80 bg-white/70 p-4">
+              <div className="text-sm text-slate-600">Delivery</div>
+              <div className="text-lg text-slate-900">Fast local dispatch</div>
+            </div>
+          </div>
+        </div>
+        <div className="relative">
+          <div className="absolute -top-6 -right-6 w-32 h-32 bg-sky-200/40 rounded-full blur-2xl" />
+          <img src={heroImage} alt="Pharmacy hero" className="w-full h-[420px] object-cover rounded-3xl shadow-2xl" />
+        </div>
+      </div>
+    </section>
+  );
+
+  const renderNeumorphHero = () => (
+    <section className="relative rounded-[32px] overflow-hidden bg-slate-100 border border-slate-200 shadow-[20px_20px_40px_rgba(15,23,42,0.12),-20px_-20px_40px_rgba(255,255,255,0.8)]">
+      <div className="grid lg:grid-cols-[0.95fr_1.05fr] gap-10 items-center p-8 md:p-16">
+        <div className="space-y-6">
+          <div className="inline-flex items-center px-4 py-2 rounded-2xl bg-slate-100 shadow-[inset_-6px_-6px_12px_rgba(255,255,255,0.8),inset_6px_6px_12px_rgba(15,23,42,0.12)] text-slate-700 text-sm">
+            Soft-touch care
+          </div>
+          <h1 className="text-5xl md:text-6xl text-slate-900">
+            {brandName}
+            <br />
+            <span className="text-[var(--brand-accent)]">Neumorph Studio</span>
+          </h1>
+          <p className="text-lg text-slate-600">
+            Smooth, tactile UI components with gentle depth and comfort-first navigation.
+          </p>
+          <div className="flex flex-wrap gap-4">
+            <Link
+              to="/appointments"
+              className="px-6 py-3 bg-[var(--brand-accent)] text-white rounded-2xl hover:opacity-95 transition-colors shadow-[0_14px_30px_rgba(15,23,42,0.18)]"
+            >
+              Book appointment
+            </Link>
+            <Link
+              to="/shop"
+              className="px-6 py-3 bg-slate-100 text-slate-700 rounded-2xl shadow-[inset_-6px_-6px_12px_rgba(255,255,255,0.85),inset_6px_6px_12px_rgba(15,23,42,0.12)]"
+            >
+              Browse shop
+            </Link>
+          </div>
+        </div>
+        <div className="grid gap-4">
+          <div className="rounded-3xl overflow-hidden shadow-[12px_12px_24px_rgba(15,23,42,0.15)]">
+            <img src={heroImage} alt="Pharmacy hero" className="w-full h-56 object-cover" />
+          </div>
+          <div className="rounded-3xl overflow-hidden shadow-[12px_12px_24px_rgba(15,23,42,0.15)]">
+            <img src={secondaryImage} alt="Pharmacy interior" className="w-full h-56 object-cover" />
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+
+  const renderHero = () => {
+    if (isGlass) return renderGlassHero();
+    if (isNeumorph) return renderNeumorphHero();
+    if (layout === "breeze") return renderBreezeHero();
+    if (layout === "studio") return renderStudioHero();
+    if (layout === "market") return renderMarketHero();
+    return renderClassicHero();
+  };
+
+  return (
+    <div className="space-y-16">
+      {renderHero()}
+
+      <section className={`grid gap-6 ${isMinimal ? "md:grid-cols-2 lg:grid-cols-4" : "md:grid-cols-4"}`}>
+        {features.map((feature) => {
+          const Icon = feature.icon;
+          const tone = toneStyles[feature.tone] ?? "bg-gray-100 text-gray-600";
+          return (
+            <div
+              key={feature.title}
+              className={`${featureCardClass} p-6 rounded-2xl hover:shadow-xl transition-shadow`}
+            >
+              <div className={`w-12 h-12 ${tone} rounded-lg flex items-center justify-center mb-4`}>
+                <Icon className="w-6 h-6" />
+              </div>
+              <h3 className="text-gray-900 mb-2">{feature.title}</h3>
+              <p className="text-gray-600 text-sm">{feature.description}</p>
+            </div>
+          );
+        })}
+      </section>
+
+      <section className="bg-white rounded-2xl p-8 md:p-12 shadow-md">
+        <div className="grid md:grid-cols-2 gap-12 items-center">
+          <div>
+            <img src={secondaryImage} alt="Healthcare consultation" className="w-full rounded-xl shadow-lg" />
+          </div>
+          <div className="space-y-4">
+            <h2 className="text-4xl text-gray-900">Caring for Your Health Since 1995</h2>
+            <p className="text-gray-600">
+              At {brandName}, we have been serving our community with dedication and care for decades. Our team is
+              committed to providing you with personalized support and access to the medications you need.
+            </p>
+            <p className="text-gray-600">
+              We understand that your health is your most valuable asset. That is why we go above and beyond to ensure
+              you receive expert advice and friendly service.
+            </p>
+            <ul className="space-y-2">
+              <li className="flex items-center gap-2 text-gray-700">
+                <div className="w-2 h-2 bg-[var(--brand-primary)] rounded-full"></div>
+                Licensed and certified pharmacists
+              </li>
+              <li className="flex items-center gap-2 text-gray-700">
+                <div className="w-2 h-2 bg-[var(--brand-primary)] rounded-full"></div>
+                Free health consultations
+              </li>
+              <li className="flex items-center gap-2 text-gray-700">
+                <div className="w-2 h-2 bg-[var(--brand-primary)] rounded-full"></div>
+                Medication therapy management
+              </li>
+            </ul>
+          </div>
         </div>
       </section>
 
-      <div className="storefront-grid" style={{ marginTop: "1.5rem" }}>
-        <section className="card reveal">
-          <header className="card-header">
-            <div>
-              <h2 className="card-title">Medicines</h2>
-              <p className="card-description">Search, filter, and add medicines to your cart.</p>
-            </div>
-            <button type="button" className="btn btn-ghost" onClick={loadMedicines} disabled={isLoading}>
-              {isLoading ? "Refreshing..." : "Refresh"}
-            </button>
-          </header>
-
-          <div className="grid" style={{ gap: "0.75rem" }}>
-            {medicineError ? <div className="alert alert-danger">{medicineError}</div> : null}
-            {inventoryEmpty ? (
-              <div className="alert">
-                This pharmacy has not added its inventory yet. Please check back soon.
-                {isPortalHost() ? null : " If you are the owner, add medicines in the portal."}
-              </div>
-            ) : null}
-
-            <input
-              type="text"
-              className="input"
-              placeholder="Search by name or category"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              disabled={inventoryEmpty}
-            />
-
-            {isLoading && medicines.length === 0 ? <p className="help">Loading medicines...</p> : null}
-
-            {filteredMedicines.length === 0 ? (
-              <p className="help">{medicines.length === 0 ? "No medicines listed yet." : "No matches found."}</p>
-            ) : (
-              <ul className="list">
-                {filteredMedicines.map((medicine) => (
-                  <li key={medicine.id} className="list-item">
-                    <div>
-                      <p className="list-item-title">
-                        {medicine.name} <span className="help">$ {medicine.price}</span>
-                      </p>
-                      <p className="list-item-meta">
-                        {medicine.category ? `Category: ${medicine.category} • ` : ""}
-                        {medicine.prescription_required ? "Prescription required" : "OTC"}
-                        {` • Stock: ${medicine.stock_level}`}
-                      </p>
-                    </div>
-                    <div className="inline" style={{ flexWrap: "wrap", justifyContent: "flex-end" }}>
-                      {stockBadge(medicine)}
-                      <button type="button" className="btn btn-primary" onClick={() => addToCart(medicine)} disabled={medicine.stock_level <= 0}>
-                        Add
-                      </button>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </section>
-
-        <section className="card reveal">
-          <header className="card-header">
-            <div>
-              <h2 className="card-title">Your cart</h2>
-              <p className="card-description">Review quantities and submit your COD order.</p>
-            </div>
-            <span className="badge">${cartTotal.toFixed(2)}</span>
-          </header>
-
-          <div className="grid" style={{ gap: "0.8rem" }}>
-            {cart.length === 0 ? (
-              <p className="help">
-                {hasMedicines ? "Add medicines from the list to get started." : "Inventory is not available yet."}
-              </p>
-            ) : (
-              <ul className="list compact">
-                {cart.map((item) => (
-                  <li key={item.id} className="list-item compact">
-                    <div>
-                      <p className="list-item-title">{item.name}</p>
-                      <p className="list-item-meta">
-                        ${item.price.toFixed(2)} • Qty {item.quantity}
-                      </p>
-                    </div>
-                    <div className="inline">
-                      <input
-                        type="number"
-                        min="1"
-                        className="input input-compact"
-                        value={item.quantity}
-                        onChange={(e) => updateCartQuantity(item.id, Number(e.target.value))}
-                      />
-                      <button type="button" className="btn btn-ghost" onClick={() => updateCartQuantity(item.id, 0)}>
-                        Remove
-                      </button>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-
-            <form className="form" onSubmit={handleCheckout}>
-              {orderError ? <div className="alert alert-danger">{orderError}</div> : null}
-              {orderSuccess ? (
-                <div className="alert">
-                  <strong>Order placed.</strong> Tracking code: {orderSuccess.tracking_code}
-                </div>
-              ) : null}
-
-              <div className="form-row">
-                <label className="label" htmlFor="customerName">
-                  Full name
-                </label>
-                <input id="customerName" className="input" value={checkout.name} onChange={(e) => setCheckout((prev) => ({ ...prev, name: e.target.value }))} required />
-              </div>
-
-              <div className="form-row">
-                <label className="label" htmlFor="customerPhone">
-                  Phone
-                </label>
-                <input id="customerPhone" className="input" value={checkout.phone} onChange={(e) => setCheckout((prev) => ({ ...prev, phone: e.target.value }))} required />
-              </div>
-
-              <div className="form-row">
-                <label className="label" htmlFor="customerAddress">
-                  Delivery address
-                </label>
-                <input id="customerAddress" className="input" value={checkout.address} onChange={(e) => setCheckout((prev) => ({ ...prev, address: e.target.value }))} required />
-              </div>
-
-              <div className="form-row">
-                <label className="label" htmlFor="customerNotes">
-                  Notes (optional)
-                </label>
-                <textarea id="customerNotes" className="textarea" rows="3" value={checkout.notes} onChange={(e) => setCheckout((prev) => ({ ...prev, notes: e.target.value }))} />
-              </div>
-
-              <button className="btn btn-primary" type="submit" disabled={isSubmittingOrder}>
-                {isSubmittingOrder ? "Placing order..." : "Place COD order"}
-              </button>
-            </form>
-          </div>
-        </section>
-      </div>
-
-      <div className="grid grid-2" style={{ marginTop: "1.5rem" }}>
-        <section className="card reveal">
-          <header className="card-header">
-            <div>
-              <h2 className="card-title">Track your order</h2>
-              <p className="card-description">Use the tracking code to view order status.</p>
-            </div>
-          </header>
-
-          <div className="grid" style={{ gap: "0.75rem" }}>
-            <label className="form-row">
-              <span className="label">Tracking code</span>
-              <input className="input" value={orderTrackingCode} onChange={(e) => setOrderTrackingCode(e.target.value)} placeholder="Paste tracking code" />
-            </label>
-            <button type="button" className="btn btn-primary" onClick={handleOrderLookup}>
-              View orders
-            </button>
-            {ordersError ? <div className="alert alert-danger">{ordersError}</div> : null}
-            {ordersLoading ? <p className="help">Loading orders...</p> : null}
-            {orders.length === 0 && !ordersLoading ? <p className="help">No orders found.</p> : null}
-
-            {orders.length > 0 ? (
-              <ul className="list compact">
-                {orders.map((order) => (
-                  <li key={order.id} className="list-item compact">
-                    <div>
-                      <p className="list-item-title">Order #{order.id}</p>
-                      <p className="list-item-meta">
-                        {formatDate(order.order_date)} • {order.status}
-                      </p>
-                    </div>
-                    <button type="button" className="btn btn-ghost" onClick={() => loadOrderDetail(order.id)}>
-                      Details
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-
-            {orderDetailError ? <div className="alert alert-danger">{orderDetailError}</div> : null}
-            {selectedOrder ? (
-              <div className="card-subtle">
-                <h3 className="card-title">Order #{selectedOrder.id} items</h3>
-                {(selectedOrder.items ?? []).length === 0 ? (
-                  <p className="help">No items returned.</p>
-                ) : (
-                  <ul className="list compact">
-                    {selectedOrder.items.map((item) => (
-                      <li key={item.id} className="list-item compact">
-                        <div>
-                          <p className="list-item-title">Medicine #{item.medicine_id}</p>
-                          <p className="list-item-meta">
-                            Qty {item.quantity} • ${item.unit_price.toFixed(2)} each
-                          </p>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            ) : null}
-          </div>
-        </section>
-
-        <section className="card reveal">
-          <header className="card-header">
-            <div>
-              <h2 className="card-title">Prescription upload</h2>
-              <p className="card-description">Upload a prescription if your order requires one.</p>
-            </div>
-            {requiresPrescription ? <span className="badge badge-warning">Required</span> : null}
-          </header>
-
-          <form className="form" onSubmit={uploadPrescription}>
-            {prescriptionError ? <div className="alert alert-danger">{prescriptionError}</div> : null}
-            {prescriptionStatus ? <div className="alert">{prescriptionStatus}</div> : null}
-
-            <div className="form-row">
-              <label className="label" htmlFor="prescriptionOrderId">
-                Order ID
-              </label>
-              <input id="prescriptionOrderId" className="input" value={prescriptionOrderId} onChange={(e) => setPrescriptionOrderId(e.target.value)} placeholder="e.g. 42" />
-            </div>
-
-            <div className="form-row">
-              <label className="label" htmlFor="prescriptionFile">
-                Prescription file
-              </label>
-              <input id="prescriptionFile" className="input" type="file" onChange={(e) => setPrescriptionFile(e.target.files?.[0] ?? null)} />
-            </div>
-
-            <button className="btn btn-primary" type="submit">
-              Upload prescription
-            </button>
-          </form>
-        </section>
-      </div>
-
-      <div className="grid grid-2" style={{ marginTop: "1.5rem" }}>
-        <section className="card reveal">
-          <header className="card-header">
-            <div>
-              <h2 className="card-title">Book a vaccine appointment</h2>
-              <p className="card-description">Request a time and keep your tracking code for follow-ups.</p>
-            </div>
-          </header>
-
-          <form className="form" onSubmit={bookAppointment}>
-            {appointmentError ? <div className="alert alert-danger">{appointmentError}</div> : null}
-            {appointmentSuccess ? <div className="alert">{appointmentSuccess}</div> : null}
-
-            <div className="form-row">
-              <label className="label" htmlFor="apptName">
-                Full name
-              </label>
-              <input id="apptName" className="input" value={appointmentForm.name} onChange={(e) => setAppointmentForm((prev) => ({ ...prev, name: e.target.value }))} required />
-            </div>
-
-            <div className="form-row">
-              <label className="label" htmlFor="apptPhone">
-                Phone
-              </label>
-              <input id="apptPhone" className="input" value={appointmentForm.phone} onChange={(e) => setAppointmentForm((prev) => ({ ...prev, phone: e.target.value }))} required />
-            </div>
-
-            <div className="form-row">
-              <label className="label" htmlFor="apptType">
-                Appointment type
-              </label>
-              <input id="apptType" className="input" value={appointmentForm.type} onChange={(e) => setAppointmentForm((prev) => ({ ...prev, type: e.target.value }))} />
-            </div>
-
-            <div className="form-row">
-              <label className="label" htmlFor="apptVaccine">
-                Vaccine name (optional)
-              </label>
-              <input id="apptVaccine" className="input" value={appointmentForm.vaccineName} onChange={(e) => setAppointmentForm((prev) => ({ ...prev, vaccineName: e.target.value }))} />
-            </div>
-
-            <div className="form-row">
-              <label className="label" htmlFor="apptTime">
-                Scheduled time
-              </label>
-              <input id="apptTime" className="input" type="datetime-local" value={appointmentForm.scheduledTime} onChange={(e) => setAppointmentForm((prev) => ({ ...prev, scheduledTime: e.target.value }))} required />
-            </div>
-
-            <button className="btn btn-primary" type="submit">
-              Book appointment
-            </button>
-          </form>
-        </section>
-
-        <section className="card reveal">
-          <header className="card-header">
-            <div>
-              <h2 className="card-title">My appointments</h2>
-              <p className="card-description">Track appointment status with your code.</p>
-            </div>
-          </header>
-
-          <div className="grid" style={{ gap: "0.75rem" }}>
-            <label className="form-row">
-              <span className="label">Tracking code</span>
-              <input className="input" value={appointmentTrackingCode} onChange={(e) => setAppointmentTrackingCode(e.target.value)} placeholder="Paste tracking code" />
-            </label>
-            <button type="button" className="btn btn-primary" onClick={handleAppointmentLookup}>
-              View appointments
-            </button>
-
-            {appointmentsLoading ? <p className="help">Loading appointments...</p> : null}
-            {appointments.length === 0 && !appointmentsLoading ? <p className="help">No appointments found.</p> : null}
-
-            {appointments.length > 0 ? (
-              <ul className="list compact">
-                {appointments.map((appt) => (
-                  <li key={appt.id} className="list-item compact">
-                    <div>
-                      <p className="list-item-title">{appt.type}</p>
-                      <p className="list-item-meta">
-                        {formatDate(appt.scheduled_time)} • {appt.status}
-                      </p>
-                    </div>
-                    {appt.vaccine_name ? <span className="badge">{appt.vaccine_name}</span> : null}
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </div>
-        </section>
-      </div>
-
-      <section className="card reveal" style={{ marginTop: "1.5rem" }}>
-        <header className="card-header">
-          <div>
-            <h2 className="card-title">AI assistant</h2>
-            <p className="card-description">
-              {hasMedicines
-                ? "Ask about medicines available in this pharmacy. Medical-risk questions are escalated to a pharmacist."
-                : "This pharmacy has not listed inventory yet. You can still ask about store details."}
-            </p>
-          </div>
-          <div className="inline" style={{ gap: "0.5rem" }}>
-            {chatId ? <span className="badge">Chat: {chatId}</span> : null}
-            <button type="button" className="btn btn-ghost" onClick={startNewChat}>
-              New chat
-            </button>
-          </div>
-        </header>
-
-        <div className="grid" style={{ gap: "0.75rem" }}>
-          {chatError ? <div className="alert alert-danger">{chatError}</div> : null}
-
-          <div className="card-subtle" style={{ maxHeight: "320px", overflow: "auto" }}>
-            {chatMessages.length === 0 ? (
-              <p className="help">
-                {hasMedicines
-                  ? "No messages yet. Ask about a medicine name (example: “Panadol”)."
-                  : "No messages yet. Inventory is not available yet."}
-              </p>
-            ) : (
-              <ul className="list compact">
-                {chatMessages.map((m) => (
-                  <li key={m.id} className="list-item compact">
-                    <div style={{ width: "100%" }}>
-                      <p className="list-item-title">You</p>
-                      <p className="help" style={{ whiteSpace: "pre-wrap" }}>{m.customer_query}</p>
-
-                      <p className="list-item-title" style={{ marginTop: "0.5rem" }}>AI</p>
-                      <p className="help" style={{ whiteSpace: "pre-wrap" }}>{m.ai_response}</p>
-
-                      {m.escalated_to_human ? (
-                        <div className="inline" style={{ gap: "0.5rem", marginTop: "0.35rem" }}>
-                          <span className="badge badge-warning">Escalated</span>
-                          {m.owner_reply ? (
-                            <span className="badge badge-success">Pharmacist replied</span>
-                          ) : (
-                            <span className="badge">Waiting for reply</span>
-                          )}
-                        </div>
-                      ) : null}
-
-                      {m.owner_reply ? (
-                        <div style={{ marginTop: "0.6rem" }}>
-                          <p className="list-item-title">Pharmacist</p>
-                          <p className="help" style={{ whiteSpace: "pre-wrap" }}>{m.owner_reply}</p>
-                        </div>
-                      ) : null}
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-
-          <form className="inline" style={{ gap: "0.5rem" }} onSubmit={sendChat}>
-            <input
-              className="input"
-              value={chatInput}
-              onChange={(e) => setChatInput(e.target.value)}
-              placeholder="Type your question..."
-              disabled={chatLoading}
-            />
-            <button type="submit" className="btn btn-primary" disabled={chatLoading}>
-              {chatLoading ? "Sending..." : "Send"}
-            </button>
-          </form>
+      <section className="grid md:grid-cols-3 gap-8">
+        <div className="text-center p-8 bg-gradient-to-br from-[var(--brand-primary)] to-[var(--brand-primary-600)] rounded-2xl text-white">
+          <div className="text-5xl mb-2">25+</div>
+          <div className="text-lg opacity-90">Years of Service</div>
+        </div>
+        <div className="text-center p-8 bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl text-white">
+          <div className="text-5xl mb-2">50K+</div>
+          <div className="text-lg opacity-90">Happy Customers</div>
+        </div>
+        <div className="text-center p-8 bg-gradient-to-br from-purple-500 to-purple-600 rounded-2xl text-white">
+          <div className="text-5xl mb-2">10K+</div>
+          <div className="text-lg opacity-90">Products Available</div>
         </div>
       </section>
     </div>

@@ -1,0 +1,24 @@
+# RAG configuration (defaults).
+# Environment variables still override these values for backward compatibility.
+#
+# Related env vars:
+# - RAG_EMBEDDINGS_ENABLED
+# - RAG_RETRIEVAL_MODE
+# - RAG_TOP_K
+# - RAG_INVENTORY_TOP_K
+# - RAG_SOURCES_MAX_CHARS
+# - RAG_MIN_SCORE
+# - RAG_MIN_SCORE_SHORT
+
+rag:
+  embeddings_enabled: true
+  retrieval_mode: vector # vector | keyword | hybrid
+  top_k: 6
+  inventory_top_k: 4
+  sources_max_chars: 6000
+  min_score: 0.35
+  min_score_short: 0.15
+
+# Notes:
+# - `min_score_short` applies when the message has <= 2 tokens.
+# - `sources_max_chars` limits how much retrieved content is sent to the LLM.

@@ -7,9 +7,10 @@ from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app import models, schemas
-from app.auth.deps import require_owner, require_pharmacy_owner
+from app.auth.deps import require_approved_owner, require_pharmacy_owner
 from app.db import get_db
 from app.deps import get_active_public_pharmacy_id, get_current_pharmacy_id
+from app.utils.validation import validate_e164_phone
 
 router = APIRouter(prefix="/orders", tags=["Orders"])
 
@@ -34,21 +35,44 @@ def create_customer_order(
     if not payload.items:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Order must include items")
 
-    medicine_ids = [item.medicine_id for item in payload.items]
-    medicines = (
-        db.query(models.Medicine)
-        .filter(
-            models.Medicine.pharmacy_id == tenant_pharmacy_id,
-            models.Medicine.id.in_(medicine_ids),
+    medicine_ids = [item.medicine_id for item in payload.items if item.medicine_id is not None]
+    product_ids = [item.product_id for item in payload.items if item.product_id is not None]
+
+    medicines: list[models.Medicine] = []
+    if medicine_ids:
+        medicines = (
+            db.query(models.Medicine)
+            .filter(
+                models.Medicine.pharmacy_id == tenant_pharmacy_id,
+                models.Medicine.id.in_(medicine_ids),
+            )
+            .all()
         )
-        .all()
-    )
     medicine_by_id = {medicine.id: medicine for medicine in medicines}
-    missing = sorted(set(medicine_ids) - set(medicine_by_id.keys()))
-    if missing:
+
+    products: list[models.Product] = []
+    if product_ids:
+        products = (
+            db.query(models.Product)
+            .filter(
+                models.Product.pharmacy_id == tenant_pharmacy_id,
+                models.Product.id.in_(product_ids),
+            )
+            .all()
+        )
+    product_by_id = {product.id: product for product in products}
+
+    missing_meds = sorted(set(medicine_ids) - set(medicine_by_id.keys()))
+    if missing_meds:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid medicine_id(s) for this pharmacy: {', '.join(map(str, missing))}",
+            detail=f"Invalid medicine_id(s) for this pharmacy: {', '.join(map(str, missing_meds))}",
+        )
+    missing_products = sorted(set(product_ids) - set(product_by_id.keys()))
+    if missing_products:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid product_id(s) for this pharmacy: {', '.join(map(str, missing_products))}",
         )
 
     items: list[models.OrderItem] = []
@@ -56,22 +80,71 @@ def create_customer_order(
     for item in payload.items:
         if item.quantity <= 0:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Quantity must be positive")
-        medicine = medicine_by_id[item.medicine_id]
-        if medicine.prescription_required:
-            requires_prescription = True
+        if item.medicine_id is not None and item.product_id is not None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Each item must include either medicine_id or product_id (not both)",
+            )
+        if item.medicine_id is None and item.product_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Each item must include medicine_id or product_id",
+            )
+
+        if item.medicine_id is not None:
+            medicine = medicine_by_id[item.medicine_id]
+            if medicine.prescription_required:
+                requires_prescription = True
+            items.append(
+                models.OrderItem(
+                    medicine_id=medicine.id,
+                    quantity=item.quantity,
+                    unit_price=float(medicine.price),
+                )
+            )
+            continue
+
+        product = product_by_id[int(item.product_id)]
         items.append(
             models.OrderItem(
-                medicine_id=medicine.id,
+                product_id=product.id,
                 quantity=item.quantity,
-                unit_price=float(medicine.price),
+                unit_price=float(product.price),
             )
         )
+
+    draft_tokens = [t.strip() for t in (payload.draft_prescription_tokens or []) if t and t.strip()]
+    draft_prescriptions: list[models.Prescription] = []
+    if requires_prescription:
+        if not draft_tokens:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Prescription required. Upload prescription before placing this order.",
+            )
+
+        draft_prescriptions = (
+            db.query(models.Prescription)
+            .filter(
+                models.Prescription.pharmacy_id == tenant_pharmacy_id,
+                models.Prescription.order_id.is_(None),
+                models.Prescription.status == "DRAFT",
+                models.Prescription.draft_token.in_(draft_tokens),
+            )
+            .all()
+        )
+        found = {p.draft_token for p in draft_prescriptions if p.draft_token}
+        missing = [t for t in draft_tokens if t not in found]
+        if missing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Some uploaded prescriptions could not be found for this pharmacy.",
+            )
 
     tracking_code = secrets.token_urlsafe(16)
     order = models.Order(
         customer_id=tracking_code,
         customer_name=payload.customer_name.strip(),
-        customer_phone=payload.customer_phone.strip(),
+        customer_phone=validate_e164_phone(payload.customer_phone, "customer"),
         customer_address=payload.customer_address.strip(),
         customer_notes=(payload.customer_notes.strip() if payload.customer_notes else None),
         status="PENDING",
@@ -87,6 +160,10 @@ def create_customer_order(
         item.order_id = order.id
         db.add(item)
 
+    for prescription in draft_prescriptions:
+        prescription.order_id = order.id
+        prescription.status = "PENDING"
+
     db.commit()
     return schemas.CustomerOrderCreated(
         order_id=order.id,
@@ -96,6 +173,89 @@ def create_customer_order(
         payment_status=order.payment_status,
         order_date=order.order_date,
         requires_prescription=requires_prescription,
+    )
+
+
+@router.post("/rx", response_model=schemas.CustomerOrderCreated)
+def create_customer_rx_order(
+    payload: schemas.CustomerRxOrderCreate,
+    db: Session = Depends(get_db),
+    tenant_pharmacy_id: int = Depends(get_active_public_pharmacy_id),
+):
+    if payload.quantity <= 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Quantity must be positive")
+    draft_tokens = [t.strip() for t in (payload.draft_prescription_tokens or []) if t and t.strip()]
+    if not draft_tokens:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Upload prescription before placing this order.")
+
+    medicine = (
+        db.query(models.Medicine)
+        .filter(models.Medicine.pharmacy_id == tenant_pharmacy_id, models.Medicine.id == int(payload.medicine_id))
+        .first()
+    )
+    if not medicine:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Medicine not found")
+    if not bool(medicine.prescription_required):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This medicine does not require a prescription")
+    if int(medicine.stock_level or 0) < int(payload.quantity):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Insufficient stock")
+
+    draft_prescriptions = (
+        db.query(models.Prescription)
+        .filter(
+            models.Prescription.pharmacy_id == tenant_pharmacy_id,
+            models.Prescription.order_id.is_(None),
+            models.Prescription.status == "DRAFT",
+            models.Prescription.draft_token.in_(draft_tokens),
+        )
+        .all()
+    )
+    found = {p.draft_token for p in draft_prescriptions if p.draft_token}
+    missing = [t for t in draft_tokens if t not in found]
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Some uploaded prescriptions could not be found for this pharmacy.",
+        )
+
+    tracking_code = secrets.token_urlsafe(16)
+    order = models.Order(
+        customer_id=tracking_code,
+        customer_name=payload.customer_name.strip(),
+        customer_phone=validate_e164_phone(payload.customer_phone, "customer"),
+        customer_address=payload.customer_address.strip(),
+        customer_notes=(payload.customer_notes.strip() if payload.customer_notes else None),
+        status="PENDING",
+        payment_method="COD",
+        payment_status="UNPAID",
+        order_date=datetime.utcnow(),
+        pharmacy_id=tenant_pharmacy_id,
+    )
+    db.add(order)
+    db.flush()
+
+    db.add(
+        models.OrderItem(
+            order_id=order.id,
+            medicine_id=int(medicine.id),
+            quantity=int(payload.quantity),
+            unit_price=float(medicine.price),
+        )
+    )
+
+    for prescription in draft_prescriptions:
+        prescription.order_id = order.id
+        prescription.status = "PENDING"
+
+    db.commit()
+    return schemas.CustomerOrderCreated(
+        order_id=order.id,
+        tracking_code=tracking_code,
+        status=order.status,
+        payment_method=order.payment_method,
+        payment_status=order.payment_status,
+        order_date=order.order_date,
+        requires_prescription=True,
     )
 
 
@@ -118,7 +278,7 @@ def list_customer_orders(
 
 @router.get("/owner", response_model=list[schemas.Order])
 def list_owner_orders(
-    current_user: models.User = Depends(require_owner),
+    current_user: models.User = Depends(require_approved_owner),
     db: Session = Depends(get_db),
 ):
     return (
@@ -172,24 +332,53 @@ def approve_order(
     if not order_items:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Order has no items")
 
-    med_ids = [item.medicine_id for item in order_items]
-    medicines = (
-        db.query(models.Medicine)
-        .filter(models.Medicine.pharmacy_id == pharmacy_id, models.Medicine.id.in_(med_ids))
-        .all()
-    )
-    medicine_by_id = {m.id: m for m in medicines}
-    for item in order_items:
-        medicine = medicine_by_id.get(item.medicine_id)
-        if not medicine:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Order contains invalid medicine")
-        if medicine.stock_level < item.quantity:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Insufficient stock for {medicine.name}",
-            )
+    med_ids = [item.medicine_id for item in order_items if item.medicine_id is not None]
+    product_ids = [item.product_id for item in order_items if item.product_id is not None]
 
-    prescription_needed = any(medicine_by_id[item.medicine_id].prescription_required for item in order_items)
+    medicines: list[models.Medicine] = []
+    if med_ids:
+        medicines = (
+            db.query(models.Medicine)
+            .filter(models.Medicine.pharmacy_id == pharmacy_id, models.Medicine.id.in_(med_ids))
+            .all()
+        )
+    medicine_by_id = {m.id: m for m in medicines}
+
+    products: list[models.Product] = []
+    if product_ids:
+        products = (
+            db.query(models.Product)
+            .filter(models.Product.pharmacy_id == pharmacy_id, models.Product.id.in_(product_ids))
+            .all()
+        )
+    product_by_id = {p.id: p for p in products}
+
+    for item in order_items:
+        if item.medicine_id is not None:
+            medicine = medicine_by_id.get(item.medicine_id)
+            if not medicine:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Order contains invalid medicine")
+            if medicine.stock_level < item.quantity:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Insufficient stock for {medicine.name}",
+                )
+            continue
+        if item.product_id is not None:
+            product = product_by_id.get(item.product_id)
+            if not product:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Order contains invalid product")
+            if product.stock_level < item.quantity:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Insufficient stock for {product.name}",
+                )
+            continue
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Order contains invalid item")
+
+    prescription_needed = any(
+        (item.medicine_id is not None and medicine_by_id[item.medicine_id].prescription_required) for item in order_items
+    )
     if prescription_needed:
         approved_prescription = (
             db.query(models.Prescription)
@@ -203,8 +392,12 @@ def approve_order(
             )
 
     for item in order_items:
-        medicine = medicine_by_id[item.medicine_id]
-        medicine.stock_level -= item.quantity
+        if item.medicine_id is not None:
+            medicine = medicine_by_id[item.medicine_id]
+            medicine.stock_level -= item.quantity
+        elif item.product_id is not None:
+            product = product_by_id[item.product_id]
+            product.stock_level -= item.quantity
 
     order.status = "APPROVED"
     db.commit()

@@ -61,6 +61,23 @@ def test_admin_can_approve_pending_pharmacy(client: TestClient):
     register_response = client.post("/auth/register-owner", json=register_payload)
     assert register_response.status_code == 200
 
+    login_response = client.post(
+        "/auth/login",
+        json={"email": register_payload["email"], "password": register_payload["password"]},
+    )
+    assert login_response.status_code == 200
+    token = login_response.json()["access_token"]
+    owner_headers = {"Authorization": f"Bearer {token}"}
+
+    # Owner can read their pharmacy settings, but cannot use the owner dashboard until approved.
+    my_pharmacy_before = client.get("/pharmacies/me", headers=owner_headers)
+    assert my_pharmacy_before.status_code == 200
+    assert my_pharmacy_before.json()["status"] == "PENDING"
+    assert my_pharmacy_before.json()["is_active"] is False
+
+    owner_products_before = client.get("/products/owner", headers=owner_headers)
+    assert owner_products_before.status_code == 403
+
     # Public tenant resolution should reject pending/inactive pharmacies
     public_before = client.get("/pharmacies/current", headers={"X-Pharmacy-Domain": "sunrise.local"})
     assert public_before.status_code == 404
@@ -80,6 +97,10 @@ def test_admin_can_approve_pending_pharmacy(client: TestClient):
     approved = approve_response.json()
     assert approved["status"] == "APPROVED"
     assert approved["is_active"] is True
+
+    # Owner dashboard APIs unlock after approval.
+    owner_products_after = client.get("/products/owner", headers=owner_headers)
+    assert owner_products_after.status_code == 200
 
     # After approval the public tenant endpoint resolves successfully
     public_after = client.get("/pharmacies/current", headers={"X-Pharmacy-Domain": "sunrise.local"})

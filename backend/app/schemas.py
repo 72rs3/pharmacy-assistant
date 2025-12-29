@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict
@@ -15,6 +15,17 @@ class PharmacyBase(BaseModel):
     branding_details: Optional[str] = None
     operating_hours: Optional[str] = None
     support_cod: bool = True
+    logo_url: Optional[str] = None
+    hero_image_url: Optional[str] = None
+    primary_color: Optional[str] = None
+    primary_color_600: Optional[str] = None
+    accent_color: Optional[str] = None
+    font_family: Optional[str] = None
+    theme_preset: Optional[str] = None
+    storefront_layout: Optional[str] = None
+    contact_email: Optional[str] = None
+    contact_phone: Optional[str] = None
+    contact_address: Optional[str] = None
 
 
 class PharmacyCreate(PharmacyBase):
@@ -30,6 +41,23 @@ class Pharmacy(PharmacyBase):
     model_config = ConfigDict(from_attributes=True)
 
 
+class PharmacyUpdate(BaseModel):
+    branding_details: Optional[str] = None
+    operating_hours: Optional[str] = None
+    support_cod: Optional[bool] = None
+    logo_url: Optional[str] = None
+    hero_image_url: Optional[str] = None
+    primary_color: Optional[str] = None
+    primary_color_600: Optional[str] = None
+    accent_color: Optional[str] = None
+    font_family: Optional[str] = None
+    theme_preset: Optional[str] = None
+    storefront_layout: Optional[str] = None
+    contact_email: Optional[str] = None
+    contact_phone: Optional[str] = None
+    contact_address: Optional[str] = None
+
+
 # --------------------
 # Medicine
 # --------------------
@@ -40,6 +68,7 @@ class MedicineBase(BaseModel):
     category: Optional[str] = None
     price: float
     stock_level: int
+    expiry_date: Optional[date] = None
     prescription_required: bool = False
     dosage: Optional[str] = None
     side_effects: Optional[str] = None
@@ -47,6 +76,50 @@ class MedicineBase(BaseModel):
 
 class MedicineCreate(MedicineBase):
     pharmacy_id: Optional[int] = None
+
+
+class MedicineUpdate(BaseModel):
+    name: Optional[str] = None
+    category: Optional[str] = None
+    price: Optional[float] = None
+    stock_level: Optional[int] = None
+    expiry_date: Optional[date] = None
+    prescription_required: Optional[bool] = None
+    dosage: Optional[str] = None
+    side_effects: Optional[str] = None
+
+
+class MedicineStockIn(BaseModel):
+    quantity_delta: int
+    expiry_date: Optional[date] = None
+
+
+class MedicineBulkItem(BaseModel):
+    name: str
+    dosage: Optional[str] = None
+    category: Optional[str] = None
+    price: Optional[float] = None
+    stock_delta: int = 0
+    expiry_date: Optional[date] = None
+    prescription_required: Optional[bool] = None
+    side_effects: Optional[str] = None
+
+
+class MedicineBulkImportIn(BaseModel):
+    items: list[MedicineBulkItem]
+    update_fields: bool = False
+
+
+class MedicineBulkImportError(BaseModel):
+    row: int
+    message: str
+
+
+class MedicineBulkImportOut(BaseModel):
+    created: int
+    updated: int
+    stock_in: int
+    errors: list[MedicineBulkImportError] = []
 
 
 class Medicine(MedicineBase):
@@ -57,12 +130,72 @@ class Medicine(MedicineBase):
 
 
 # --------------------
+# Product (Shop)
+# --------------------
+
+
+class ProductBase(BaseModel):
+    name: str
+    category: Optional[str] = None
+    price: float
+    stock_level: int
+    description: Optional[str] = None
+    image_url: Optional[str] = None
+
+
+class ProductCreate(ProductBase):
+    pharmacy_id: Optional[int] = None
+
+
+class ProductUpdate(BaseModel):
+    name: Optional[str] = None
+    category: Optional[str] = None
+    price: Optional[float] = None
+    stock_level: Optional[int] = None
+    description: Optional[str] = None
+    image_url: Optional[str] = None
+
+
+class Product(ProductBase):
+    id: int
+    pharmacy_id: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ProductBulkItem(BaseModel):
+    name: str
+    category: Optional[str] = None
+    price: Optional[float] = None
+    stock_level: Optional[int] = None
+    description: Optional[str] = None
+    image_url: Optional[str] = None
+
+
+class ProductBulkImportIn(BaseModel):
+    items: list[ProductBulkItem]
+    update_fields: bool = False
+
+
+class ProductBulkImportError(BaseModel):
+    row: int
+    message: str
+
+
+class ProductBulkImportOut(BaseModel):
+    created: int
+    updated: int
+    errors: list[ProductBulkImportError] = []
+
+
+# --------------------
 # Orders
 # --------------------
 
 
 class OrderItemBase(BaseModel):
-    medicine_id: int
+    medicine_id: int | None = None
+    product_id: int | None = None
     quantity: int
     unit_price: float
 
@@ -105,7 +238,8 @@ class Order(OrderBase):
 
 
 class CustomerOrderItemCreate(BaseModel):
-    medicine_id: int
+    medicine_id: int | None = None
+    product_id: int | None = None
     quantity: int
 
 
@@ -115,6 +249,17 @@ class CustomerOrderCreate(BaseModel):
     customer_address: str
     customer_notes: str | None = None
     items: List[CustomerOrderItemCreate]
+    draft_prescription_tokens: list[str] | None = None
+
+
+class CustomerRxOrderCreate(BaseModel):
+    customer_name: str
+    customer_phone: str
+    customer_address: str
+    customer_notes: str | None = None
+    medicine_id: int
+    quantity: int = 1
+    draft_prescription_tokens: list[str]
 
 
 class CustomerOrderCreated(BaseModel):
@@ -191,6 +336,17 @@ class PrescriptionStatusOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class PrescriptionDraftOut(BaseModel):
+    id: int
+    draft_token: str
+    status: str
+    upload_date: datetime | None = None
+    original_filename: str | None = None
+    content_type: str | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class PrescriptionReviewIn(BaseModel):
     status: str  # APPROVED / REJECTED
 
@@ -206,6 +362,8 @@ class AppointmentStatusIn(BaseModel):
 
 class AppointmentBase(BaseModel):
     customer_id: str
+    customer_name: str | None = None
+    customer_phone: str | None = None
     type: str
     scheduled_time: datetime
     status: str = "PENDING"
@@ -233,6 +391,8 @@ class CustomerAppointmentCreate(BaseModel):
 
 class CustomerAppointmentOut(BaseModel):
     id: int
+    customer_name: str | None = None
+    customer_phone: str | None = None
     type: str
     scheduled_time: datetime
     status: str
@@ -243,6 +403,11 @@ class CustomerAppointmentOut(BaseModel):
 
 class CustomerAppointmentCreated(CustomerAppointmentOut):
     tracking_code: str
+
+
+class AppointmentUpdateIn(BaseModel):
+    status: str | None = None  # PENDING / CONFIRMED / CANCELLED / COMPLETED
+    scheduled_time: datetime | None = None
 
 
 # --------------------
@@ -296,22 +461,53 @@ class AILog(AILogBase):
 
 class AIChatIn(BaseModel):
     message: str
+    session_id: str | None = None
 
 
 class AICitation(BaseModel):
+    source_type: str
+    title: str
     doc_id: int
     chunk_id: int
-    snippet: str
+    preview: str
+    last_updated_at: datetime | None = None
+    score: float | None = None
+
+
+class AIAction(BaseModel):
+    type: str  # add_to_cart | upload_prescription | request_notify
+    label: str | None = None
+    medicine_id: int | None = None
+    payload: dict | None = None
+
+
+class MedicineCard(BaseModel):
+    medicine_id: int
+    name: str
+    dosage: str | None = None
+    category: str | None = None
+    rx: bool
+    price: float | None = None
+    stock: int
+    updated_at: datetime | None = None
+    indexed_at: datetime | None = None
 
 
 class AIChatOut(BaseModel):
     interaction_id: int
     customer_id: str
+    session_id: str
     answer: str
     citations: list[AICitation] = []
+    cards: list[MedicineCard] = []
+    actions: list[AIAction] = []
+    quick_replies: list[str] = []
     confidence_score: float
     escalated_to_human: bool
+    intent: str
     created_at: datetime
+    data_last_updated_at: datetime | None = None
+    indexed_at: datetime | None = None
 
 
 class AIEscalationReplyIn(BaseModel):
