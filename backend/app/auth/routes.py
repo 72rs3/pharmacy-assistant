@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app import crud, models, schemas as app_schemas
+from app.auth.deps import get_current_user
 from app.auth import schemas, utils
 
 router = APIRouter()
@@ -25,9 +26,23 @@ def _create_user(user_in: schemas.UserCreate, db: Session) -> models.User:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Pharmacy name already registered",
             )
+
+        pharmacy_domain = None
+        if user_in.pharmacy_domain:
+            pharmacy_domain = user_in.pharmacy_domain.strip().lower()
+            if pharmacy_domain:
+                existing_domain = (
+                    db.query(models.Pharmacy).filter(models.Pharmacy.domain == pharmacy_domain).first()
+                )
+                if existing_domain:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Pharmacy domain already registered",
+                    )
+
         pharmacy = crud.create_pharmacy(
             db=db,
-            pharmacy=app_schemas.PharmacyCreate(name=user_in.pharmacy_name),
+            pharmacy=app_schemas.PharmacyCreate(name=user_in.pharmacy_name, domain=pharmacy_domain),
         )
 
     hashed_pw = utils.hash_password(user_in.password)
@@ -69,3 +84,8 @@ def login(user_in: schemas.UserLogin, db: Session = Depends(get_db)):
     )
 
     return schemas.Token(access_token=access_token, token_type="bearer")
+
+
+@router.get("/me", response_model=schemas.UserOut)
+def me(current_user: models.User = Depends(get_current_user)):
+    return current_user

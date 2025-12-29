@@ -9,6 +9,7 @@ class UserBase(BaseModel):
 class UserCreate(UserBase):
     password: str
     pharmacy_name: str | None = None  # owners can supply a new pharmacy name
+    pharmacy_domain: str | None = None
 
 
 class UserLogin(BaseModel):

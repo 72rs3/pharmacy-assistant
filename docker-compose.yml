@@ -1,0 +1,29 @@
+name: pharmacy-assistant
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-pharmacy}
+      POSTGRES_USER: ${POSTGRES_USER:-pharmacy}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pharmacy}
+    ports:
+      - "${POSTGRES_PORT:-15432}:5432"
+    volumes:
+      - pharmacy_pgdata:/var/lib/postgresql/data
+
+  pgadmin:
+    profiles: ["tools"]
+    image: dpage/pgadmin4:8
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@local}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-admin}
+    ports:
+      - "${PGADMIN_PORT:-5050}:80"
+    depends_on:
+      - db
+
+volumes:
+  pharmacy_pgdata:
