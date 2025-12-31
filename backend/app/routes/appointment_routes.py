@@ -13,6 +13,8 @@ from app.auth.deps import require_approved_owner, require_pharmacy_owner
 from app.db import get_db
 from app.deps import get_active_public_pharmacy_id, get_current_pharmacy_id
 from app.appointments.reminders import process_due_reminders, process_no_shows
+from app.appointments.email_templates import render_reminder
+from app.utils.email import send_email
 from app.utils.validation import validate_e164_phone
 
 router = APIRouter(prefix="/appointments", tags=["Appointments"])
@@ -167,6 +169,68 @@ def _schedule_reminders(db: Session, appointment: models.Appointment) -> None:
                 status="PENDING",
             )
         )
+
+
+def _build_availability(db: Session, pharmacy_id: int, date_str: str) -> dict:
+    settings = _get_or_create_settings(db, pharmacy_id)
+    try:
+        target_date = date.fromisoformat(date_str)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid date format") from exc
+
+    weekly_hours = _load_weekly_hours(settings)
+    weekday_key = target_date.strftime("%a").lower()[:3]
+    ranges = weekly_hours.get(weekday_key, [])
+    slot_minutes = max(5, settings.slot_minutes)
+    buffer_minutes = max(0, settings.buffer_minutes)
+
+    slots = []
+    if ranges:
+        for block in ranges:
+            try:
+                start_parts = [int(part) for part in block.get("start", "09:00").split(":")]
+                end_parts = [int(part) for part in block.get("end", "18:00").split(":")]
+                start_time = time(start_parts[0], start_parts[1])
+                end_time = time(end_parts[0], end_parts[1])
+            except Exception:
+                continue
+            start_dt = datetime.combine(target_date, start_time)
+            end_dt = datetime.combine(target_date, end_time)
+            step = timedelta(minutes=slot_minutes + buffer_minutes)
+            current = start_dt
+            while current + timedelta(minutes=slot_minutes) <= end_dt:
+                slots.append(
+                    {
+                        "start": current.isoformat(),
+                        "end": (current + timedelta(minutes=slot_minutes)).isoformat(),
+                        "booked": False,
+                        "appointment_id": None,
+                    }
+                )
+                current += step
+
+    if slots:
+        day_start = datetime.combine(target_date, time(0, 0))
+        day_end = datetime.combine(target_date, time(23, 59, 59))
+        appts = (
+            db.query(models.Appointment)
+            .filter(
+                models.Appointment.pharmacy_id == pharmacy_id,
+                models.Appointment.scheduled_time >= day_start,
+                models.Appointment.scheduled_time <= day_end,
+                models.Appointment.status.in_(["PENDING", "CONFIRMED"]),
+            )
+            .all()
+        )
+        appt_by_iso = {appt.scheduled_time.isoformat(): appt for appt in appts}
+        for slot in slots:
+            appt = appt_by_iso.get(slot["start"])
+            if appt:
+                slot["booked"] = True
+                slot["appointment_id"] = appt.id
+                slot["status"] = appt.status
+                slot["customer_name"] = appt.customer_name
+    return {"date": target_date.isoformat(), "slots": slots, "timezone": settings.timezone}
 
 
 @router.post("", response_model=schemas.CustomerAppointmentCreated)
@@ -348,65 +412,16 @@ def get_appointment_availability(
     current_user: models.User = Depends(require_approved_owner),
     db: Session = Depends(get_db),
 ):
-    settings = _get_or_create_settings(db, current_user.pharmacy_id)
-    try:
-        target_date = date.fromisoformat(date_str)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid date format") from exc
+    return _build_availability(db, current_user.pharmacy_id, date_str)
 
-    weekly_hours = _load_weekly_hours(settings)
 
-    weekday_key = target_date.strftime("%a").lower()[:3]
-    ranges = weekly_hours.get(weekday_key, [])
-    slot_minutes = max(5, settings.slot_minutes)
-    buffer_minutes = max(0, settings.buffer_minutes)
-
-    slots = []
-    if ranges:
-        for block in ranges:
-            try:
-                start_parts = [int(part) for part in block.get("start", "09:00").split(":")]
-                end_parts = [int(part) for part in block.get("end", "18:00").split(":")]
-                start_time = time(start_parts[0], start_parts[1])
-                end_time = time(end_parts[0], end_parts[1])
-            except Exception:
-                continue
-            start_dt = datetime.combine(target_date, start_time)
-            end_dt = datetime.combine(target_date, end_time)
-            step = timedelta(minutes=slot_minutes + buffer_minutes)
-            current = start_dt
-            while current + timedelta(minutes=slot_minutes) <= end_dt:
-                slots.append(
-                    {
-                        "start": current.isoformat(),
-                        "end": (current + timedelta(minutes=slot_minutes)).isoformat(),
-                        "booked": False,
-                        "appointment_id": None,
-                    }
-                )
-                current += step
-
-    if slots:
-        day_start = datetime.combine(target_date, time(0, 0))
-        day_end = datetime.combine(target_date, time(23, 59, 59))
-        appts = (
-            db.query(models.Appointment)
-            .filter(
-                models.Appointment.pharmacy_id == current_user.pharmacy_id,
-                models.Appointment.scheduled_time >= day_start,
-                models.Appointment.scheduled_time <= day_end,
-            )
-            .all()
-        )
-        appt_by_iso = {appt.scheduled_time.isoformat(): appt for appt in appts}
-        for slot in slots:
-            appt = appt_by_iso.get(slot["start"])
-            if appt:
-                slot["booked"] = True
-                slot["appointment_id"] = appt.id
-                slot["status"] = appt.status
-                slot["customer_name"] = appt.customer_name
-    return {"date": target_date.isoformat(), "slots": slots, "timezone": settings.timezone}
+@router.get("/availability/public")
+def get_public_appointment_availability(
+    date_str: str = Query(..., alias="date"),
+    db: Session = Depends(get_db),
+    tenant_pharmacy_id: int = Depends(get_active_public_pharmacy_id),
+):
+    return _build_availability(db, tenant_pharmacy_id, date_str)
 
 
 @router.post("/{appointment_id}/status", response_model=schemas.Appointment)
@@ -524,6 +539,58 @@ def mark_no_show(
     return appointment
 
 
+@router.patch("/{appointment_id}/public", response_model=schemas.CustomerAppointmentOut)
+def update_public_appointment(
+    appointment_id: int,
+    payload: schemas.AppointmentPublicUpdate,
+    db: Session = Depends(get_db),
+    tenant_pharmacy_id: int = Depends(get_active_public_pharmacy_id),
+    tracking_code: str = Depends(_require_customer_tracking_code),
+):
+    appointment = (
+        db.query(models.Appointment)
+        .filter(
+            models.Appointment.id == appointment_id,
+            models.Appointment.pharmacy_id == tenant_pharmacy_id,
+            models.Appointment.customer_id == tracking_code,
+        )
+        .first()
+    )
+    if not appointment:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Appointment not found")
+
+    old_values: dict[str, object] = {}
+    new_values: dict[str, object] = {}
+
+    if payload.cancel:
+        if appointment.status != "CANCELLED":
+            old_values["status"] = appointment.status
+            appointment.status = "CANCELLED"
+            new_values["status"] = "CANCELLED"
+
+    if payload.scheduled_time:
+        _validate_slot(db, tenant_pharmacy_id, payload.scheduled_time, exclude_id=appointment.id)
+        old_values["scheduled_time"] = appointment.scheduled_time.isoformat()
+        appointment.scheduled_time = payload.scheduled_time
+        new_values["scheduled_time"] = appointment.scheduled_time.isoformat()
+
+    if old_values or new_values:
+        _log_audit(
+            db,
+            appointment_id=appointment.id,
+            action="public_update",
+            old_values=old_values,
+            new_values=new_values,
+            changed_by_user_id=None,
+        )
+        _clear_pending_reminders(db, appointment.id)
+        _schedule_reminders(db, appointment)
+        db.commit()
+        db.refresh(appointment)
+
+    return appointment
+
+
 @router.get("/{appointment_id}/audits", response_model=list[schemas.AppointmentAudit])
 def list_appointment_audits(
     appointment_id: int,
@@ -540,6 +607,77 @@ def list_appointment_audits(
         .order_by(models.AppointmentAudit.created_at.desc())
         .all()
     )
+
+
+@router.get("/{appointment_id}/reminders", response_model=list[schemas.AppointmentReminder])
+def list_appointment_reminders(
+    appointment_id: int,
+    current_user: models.User = Depends(require_approved_owner),
+    db: Session = Depends(get_db),
+):
+    return (
+        db.query(models.AppointmentReminder)
+        .join(models.Appointment, models.AppointmentReminder.appointment_id == models.Appointment.id)
+        .filter(
+            models.Appointment.id == appointment_id,
+            models.Appointment.pharmacy_id == current_user.pharmacy_id,
+        )
+        .order_by(models.AppointmentReminder.send_at.asc())
+        .all()
+    )
+
+
+@router.get("/reminders/preview", response_model=schemas.AppointmentReminderPreviewOut)
+def preview_reminder(
+    appointment_id: int,
+    template: str = Query("24h"),
+    current_user: models.User = Depends(require_approved_owner),
+    db: Session = Depends(get_db),
+):
+    appointment = (
+        db.query(models.Appointment)
+        .filter(models.Appointment.id == appointment_id, models.Appointment.pharmacy_id == current_user.pharmacy_id)
+        .first()
+    )
+    if not appointment:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Appointment not found")
+    settings = (
+        db.query(models.AppointmentSettings)
+        .filter(models.AppointmentSettings.pharmacy_id == current_user.pharmacy_id)
+        .first()
+    )
+    template_out = render_reminder(appointment, appointment.pharmacy, settings, template_key=template)
+    return schemas.AppointmentReminderPreviewOut(subject=template_out.subject, html=template_out.body)
+
+
+@router.post("/reminders/test")
+def send_test_reminder(
+    appointment_id: int,
+    to_email: str | None = None,
+    template: str = Query("24h"),
+    current_user: models.User = Depends(require_approved_owner),
+    db: Session = Depends(get_db),
+):
+    appointment = (
+        db.query(models.Appointment)
+        .filter(models.Appointment.id == appointment_id, models.Appointment.pharmacy_id == current_user.pharmacy_id)
+        .first()
+    )
+    if not appointment:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Appointment not found")
+    settings = (
+        db.query(models.AppointmentSettings)
+        .filter(models.AppointmentSettings.pharmacy_id == current_user.pharmacy_id)
+        .first()
+    )
+    template_out = render_reminder(appointment, appointment.pharmacy, settings, template_key=template)
+    target_email = to_email or appointment.customer_email
+    if not target_email:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing target email")
+    ok, error = send_email(target_email, template_out.subject, template_out.body)
+    if not ok:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=error or "Failed to send email")
+    return {"sent": True, "to": target_email}
 
 
 @router.post("/reminders/run")

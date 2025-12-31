@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Minimize2, Pill, Send, X } from "lucide-react";
 import api from "../../api/axios";
@@ -45,6 +45,10 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
     vaccine_name: "",
     notes: "",
   });
+  const [apptDate, setApptDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [apptSlots, setApptSlots] = useState([]);
+  const [isLoadingApptSlots, setIsLoadingApptSlots] = useState(false);
+  const [apptSlotsError, setApptSlotsError] = useState("");
   const [apptError, setApptError] = useState("");
   const [isSubmittingAppt, setIsSubmittingAppt] = useState(false);
   const [messages, setMessages] = useState([
@@ -219,6 +223,7 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
   const handleSuggestionClick = (suggestion) => {
     const normalized = (suggestion ?? "").toLowerCase();
     if (normalized.includes("appointment")) {
+      const today = new Date().toISOString().slice(0, 10);
       setApptForm({
         customer_name: "",
         customer_phone: "",
@@ -228,6 +233,9 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
         vaccine_name: "",
         notes: "",
       });
+      setApptDate(today);
+      setApptSlots([]);
+      fetchApptSlots(today);
       setApptError("");
       setMessages((prev) => [
         ...prev.filter((m) => !m.appointmentForm),
@@ -256,6 +264,31 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
   const getAppointmentTrackingCode = () => {
     if (typeof window === "undefined") return "";
     return (localStorage.getItem(APPOINTMENT_TRACKING_CODE_KEY) ?? "").trim();
+  };
+
+  const openApptSlots = useMemo(() => apptSlots.filter((slot) => !slot.booked), [apptSlots]);
+
+  const fetchApptSlots = async (dateValue) => {
+    if (!dateValue) return;
+    setIsLoadingApptSlots(true);
+    setApptSlotsError("");
+    try {
+      const res = await api.get("/appointments/availability/public", { params: { date: dateValue } });
+      const slots = Array.isArray(res.data?.slots) ? res.data.slots : [];
+      setApptSlots(slots);
+    } catch (err) {
+      setApptSlots([]);
+      setApptSlotsError(err?.response?.data?.detail ?? "Unable to load available slots.");
+    } finally {
+      setIsLoadingApptSlots(false);
+    }
+  };
+
+  const handleApptDateChange = (event) => {
+    const next = event.target.value;
+    setApptDate(next);
+    setApptForm((prev) => ({ ...prev, scheduled_time: "" }));
+    fetchApptSlots(next);
   };
 
   const handleAppointmentSubmit = async (event) => {
@@ -321,7 +354,13 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
         notes: "",
       });
     } catch (err) {
-      setApptError(err?.response?.data?.detail ?? "Couldn't submit the appointment. Please try again.");
+      if (err?.response?.status === 409) {
+        setApptError("That slot was just taken. Please pick another time.");
+        setApptForm((prev) => ({ ...prev, scheduled_time: "" }));
+        fetchApptSlots(apptDate);
+      } else {
+        setApptError(err?.response?.data?.detail ?? "Couldn't submit the appointment. Please try again.");
+      }
     } finally {
       setIsSubmittingAppt(false);
     }
@@ -470,12 +509,12 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
 
   const containerClassName =
     placement === "frame"
-      ? "absolute bottom-10 right-6 w-96 max-w-[calc(100vw-3rem)]"
-      : "fixed bottom-6 right-6 w-96 max-w-[calc(100vw-3rem)]";
+      ? "absolute bottom-10 right-4 w-[92vw] sm:right-6 sm:w-96 max-w-[calc(100vw-2rem)]"
+      : "fixed bottom-4 right-4 w-[92vw] sm:bottom-6 sm:right-6 sm:w-96 max-w-[calc(100vw-2rem)]";
 
   return (
     <div
-      className={`${containerClassName} bg-white rounded-2xl shadow-2xl overflow-hidden z-50 flex flex-col h-[560px] max-h-[calc(100vh-6rem)]`}
+      className={`${containerClassName} bg-white rounded-2xl shadow-2xl overflow-hidden z-50 flex flex-col h-[80vh] sm:h-[560px] max-h-[calc(100vh-6rem)]`}
     >
       <div className="bg-gradient-to-r from-[var(--brand-primary)] to-[var(--brand-primary-600)] text-white px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -553,6 +592,7 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
                           type="button"
                           onClick={() => {
                             if (action.type === "book_appointment") {
+                              const today = new Date().toISOString().slice(0, 10);
                               setApptForm({
                                 customer_name: "",
                                 customer_phone: "",
@@ -562,6 +602,9 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
                                 vaccine_name: "",
                                 notes: "",
                               });
+                              setApptDate(today);
+                              setApptSlots([]);
+                              fetchApptSlots(today);
                               setApptError("");
                               setMessages((prev) => [
                                 ...prev.filter((m) => !m.appointmentForm),
@@ -693,12 +736,44 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
                         <option value="Vaccination">Vaccination</option>
                       </select>
                       <input
-                        type="datetime-local"
-                        value={apptForm.scheduled_time}
-                        onChange={(event) => setApptForm((prev) => ({ ...prev, scheduled_time: event.target.value }))}
+                        type="date"
+                        value={apptDate}
+                        onChange={handleApptDateChange}
                         className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
                         required
                       />
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between text-xs text-slate-600">
+                          <span>Available slots</span>
+                          {isLoadingApptSlots ? <span>Loading...</span> : null}
+                        </div>
+                        {apptSlotsError ? <div className="text-xs text-red-600">{apptSlotsError}</div> : null}
+                        {openApptSlots.length === 0 && !isLoadingApptSlots ? (
+                          <div className="text-xs text-slate-500">No open slots for this day.</div>
+                        ) : (
+                          <div className="flex flex-wrap gap-2">
+                            {openApptSlots.map((slot) => {
+                              const start = new Date(slot.start);
+                              const label = start.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+                              const isSelected = apptForm.scheduled_time === slot.start;
+                              return (
+                                <button
+                                  key={slot.start}
+                                  type="button"
+                                  onClick={() => setApptForm((prev) => ({ ...prev, scheduled_time: slot.start }))}
+                                  className={`px-3 py-1.5 rounded-lg border text-xs transition ${
+                                    isSelected
+                                      ? "border-blue-600 bg-blue-600 text-white"
+                                      : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                                  }`}
+                                >
+                                  {label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
                       {apptForm.type === "Vaccination" ? (
                         <input
                           value={apptForm.vaccine_name}

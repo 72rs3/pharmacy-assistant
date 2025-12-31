@@ -58,10 +58,10 @@ export default function CustomerLayout({ children }) {
             <button
               type="button"
               onClick={() => setIsChatOpen(true)}
-              className="fixed bottom-6 right-6 w-16 h-16 bg-[var(--brand-accent)] hover:opacity-95 text-white rounded-full shadow-2xl flex items-center justify-center transition-all hover:scale-110 z-40"
+              className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 w-14 h-14 sm:w-16 sm:h-16 bg-[var(--brand-accent)] hover:opacity-95 text-white rounded-full shadow-2xl flex items-center justify-center transition-all hover:scale-110 z-40"
               aria-label="Open AI chat"
             >
-              <MessageCircle className="w-8 h-8" />
+              <MessageCircle className="w-7 h-7 sm:w-8 sm:h-8" />
             </button>
           ) : null}
 

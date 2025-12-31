@@ -217,7 +217,8 @@ export default function CustomerOrders() {
                 </div>
 
                 <div className="rounded-xl border border-gray-200 overflow-hidden">
-                  <table className="min-w-full text-sm">
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full text-sm">
                     <thead className="bg-gray-50">
                       <tr>
                         <th className="text-left px-4 py-3 text-xs font-semibold text-gray-700">Item</th>
@@ -244,7 +245,8 @@ export default function CustomerOrders() {
                         );
                       })}
                     </tbody>
-                  </table>
+                    </table>
+                  </div>
                 </div>
 
                 <div className="flex items-center justify-between text-sm">

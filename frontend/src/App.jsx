@@ -158,7 +158,31 @@ export default function App() {
               <PortalGate>
                 <OwnerRoute>
                   <PortalShell>
-                    <OwnerAppointments />
+                    <OwnerAppointments view="overview" />
+                  </PortalShell>
+                </OwnerRoute>
+              </PortalGate>
+            }
+          />
+          <Route
+            path="/portal/owner/appointments/week"
+            element={
+              <PortalGate>
+                <OwnerRoute>
+                  <PortalShell>
+                    <OwnerAppointments view="week" />
+                  </PortalShell>
+                </OwnerRoute>
+              </PortalGate>
+            }
+          />
+          <Route
+            path="/portal/owner/appointments/schedule"
+            element={
+              <PortalGate>
+                <OwnerRoute>
+                  <PortalShell>
+                    <OwnerAppointments view="schedule" />
                   </PortalShell>
                 </OwnerRoute>
               </PortalGate>

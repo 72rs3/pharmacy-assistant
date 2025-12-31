@@ -468,6 +468,16 @@ class AppointmentReminder(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class AppointmentPublicUpdate(BaseModel):
+    scheduled_time: datetime | None = None
+    cancel: bool = False
+
+
+class AppointmentReminderPreviewOut(BaseModel):
+    subject: str
+    html: str
+
+
 # --------------------
 # AI Interaction & Logs
 # --------------------

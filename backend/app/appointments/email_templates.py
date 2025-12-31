@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -59,6 +60,18 @@ def render_reminder(
     logo_url = getattr(pharmacy, "logo_url", None) if pharmacy else None
     primary_color = getattr(pharmacy, "primary_color", None) if pharmacy else None
     accent = primary_color or "#2563eb"
+    public_base = os.getenv("APP_PUBLIC_BASE_URL", "").strip()
+    if "{domain}" in public_base and pharmacy and getattr(pharmacy, "domain", None):
+        public_base = public_base.format(domain=pharmacy.domain)
+    if not public_base:
+        if pharmacy and getattr(pharmacy, "domain", None):
+            public_base = f"http://{pharmacy.domain}:5173"
+        else:
+            public_base = "http://localhost:5173"
+    public_base = public_base.rstrip("/")
+    manage_url = f"{public_base}/appointments?code={appointment.customer_id}&appointment_id={appointment.id}"
+    cancel_url = f"{public_base}/appointments?code={appointment.customer_id}&appointment_id={appointment.id}&action=cancel"
+    reschedule_url = f"{public_base}/appointments?code={appointment.customer_id}&appointment_id={appointment.id}&action=reschedule"
 
     body = f"""
     <div style="font-family:Arial,sans-serif;background:#f8fafc;padding:24px">
@@ -73,6 +86,11 @@ def render_reminder(
           <div style="margin-top:12px;padding:12px;border-radius:10px;background:#f1f5f9">
             <div>{copy["type"].format(type=appointment.type)}</div>
             <div>{copy["time"].format(time=formatted_time)}</div>
+          </div>
+          <div style="margin-top:16px;display:flex;gap:12px;flex-wrap:wrap">
+            <a href="{reschedule_url}" style="padding:10px 14px;border-radius:10px;background:{accent};color:#ffffff;text-decoration:none;font-size:13px">Reschedule</a>
+            <a href="{cancel_url}" style="padding:10px 14px;border-radius:10px;border:1px solid #e2e8f0;color:#0f172a;text-decoration:none;font-size:13px">Cancel</a>
+            <a href="{manage_url}" style="padding:10px 14px;border-radius:10px;background:#f1f5f9;color:#0f172a;text-decoration:none;font-size:13px">View details</a>
           </div>
           <div style="margin-top:16px">{copy["footer"]}</div>
         </div>

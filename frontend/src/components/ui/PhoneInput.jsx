@@ -86,7 +86,7 @@ export default function PhoneInput({ value, onChange, required = false, id, name
             {country.code} +{country.dialCode}
           </button>
           {isOpen ? (
-            <div className="absolute z-30 mt-2 w-64 rounded-lg border border-slate-200 bg-white shadow-lg p-2">
+            <div className="absolute z-30 mt-2 w-64 max-w-[calc(100vw-2rem)] rounded-lg border border-slate-200 bg-white shadow-lg p-2">
               <input
                 type="text"
                 value={query}

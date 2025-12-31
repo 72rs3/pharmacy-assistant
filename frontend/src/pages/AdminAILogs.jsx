@@ -187,7 +187,7 @@ export default function AdminAILogs() {
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-8 text-slate-600 text-sm">No logs found.</div>
           ) : (
             <div className="rounded-2xl border border-slate-200 overflow-hidden bg-white">
-              <div className="max-h-[560px] overflow-auto">
+              <div className="max-h-[560px] overflow-auto overflow-x-auto">
                 <table className="min-w-full text-sm">
                   <thead className="bg-slate-50 sticky top-0 z-10">
                     <tr>

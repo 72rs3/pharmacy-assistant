@@ -458,7 +458,7 @@ export default function PortalHome() {
                           Open inventory
                         </button>
                       </div>
-                      <div className="max-h-[360px] overflow-auto">
+                      <div className="max-h-[360px] overflow-auto overflow-x-auto">
                         <table className="min-w-full text-sm">
                           <thead className="bg-slate-50 sticky top-0 z-10">
                             <tr>

@@ -35,6 +35,7 @@ export default function PortalShell({ children }) {
   const location = useLocation();
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [appointmentsOpen, setAppointmentsOpen] = useState(false);
   const [activePopover, setActivePopover] = useState(null); // "notifications" | "share" | "account" | null
   const headerRef = useRef(null);
 
@@ -60,6 +61,12 @@ export default function PortalShell({ children }) {
 
   useEffect(() => {
     setActivePopover(null);
+  }, [location.pathname]);
+
+  useEffect(() => {
+    if (location.pathname.startsWith("/portal/owner/appointments")) {
+      setAppointmentsOpen(true);
+    }
   }, [location.pathname]);
 
   useEffect(() => {
@@ -92,6 +99,15 @@ export default function PortalShell({ children }) {
     []
   );
 
+  const appointmentSubLinks = useMemo(
+    () => [
+      { label: "Overview", to: "/portal/owner/appointments", end: true },
+      { label: "Week view", to: "/portal/owner/appointments/week" },
+      { label: "Schedule settings", to: "/portal/owner/appointments/schedule" },
+    ],
+    []
+  );
+
   const adminLinks = useMemo(
     () => [
       { to: "/portal/admin/pharmacies", label: "Pharmacies", icon: ShieldCheck },
@@ -101,6 +117,7 @@ export default function PortalShell({ children }) {
   );
 
   const profileRole = isAdmin ? "Admin" : isOwner ? "Owner" : "Staff";
+  const isAppointmentsActive = location.pathname.startsWith("/portal/owner/appointments");
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -253,14 +270,14 @@ export default function PortalShell({ children }) {
       {menuOpen ? (
         <button
           type="button"
-          className="fixed inset-0 bg-black/30 z-30 md:hidden"
+          className="fixed inset-0 bg-black/30 z-30"
           aria-label="Close navigation menu"
           onClick={() => setMenuOpen(false)}
         />
       ) : null}
 
       <aside
-        className={`fixed inset-y-0 left-0 z-40 w-64 bg-white border-r border-gray-200 flex flex-col transition-transform md:static md:translate-x-0 ${
+        className={`fixed inset-y-0 left-0 z-40 w-64 bg-white border-r border-gray-200 flex flex-col transition-transform lg:translate-x-0 lg:static ${
           menuOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
@@ -286,15 +303,66 @@ export default function PortalShell({ children }) {
               </NavLink>
             );
           })}
-          {isOwner ? ownerLinks.map((item) => {
-            const Icon = item.icon;
-            return (
-              <NavLink key={item.to} to={item.to} className={linkClass}>
-                <Icon className="w-5 h-5" />
-                {item.label}
-              </NavLink>
-            );
-          }) : null}
+          {isOwner
+            ? ownerLinks.map((item) => {
+              const Icon = item.icon;
+              if (item.label !== "Appointments") {
+                return (
+                  <NavLink key={item.to} to={item.to} className={linkClass}>
+                    <Icon className="w-5 h-5" />
+                    {item.label}
+                  </NavLink>
+                );
+              }
+              return (
+                <div key={item.to} className="w-full">
+                  <div
+                    className={`w-full flex items-center justify-between px-5 py-3 text-sm transition-colors ${
+                      isAppointmentsActive
+                        ? "bg-blue-50 text-blue-600 border-r-2 border-blue-600"
+                        : "text-gray-600 hover:bg-gray-50"
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => navigate("/portal/owner/appointments")}
+                      className="flex items-center gap-3 flex-1 text-left"
+                    >
+                      <Icon className="w-5 h-5" />
+                      {item.label}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAppointmentsOpen((prev) => !prev)}
+                      className={`p-1 rounded-md ${isAppointmentsActive ? "text-blue-600" : "text-gray-400 hover:text-gray-600"}`}
+                      aria-label="Toggle appointments menu"
+                      aria-expanded={appointmentsOpen}
+                    >
+                      <ChevronDown className={`w-4 h-4 transition-transform ${appointmentsOpen ? "rotate-180" : ""}`} />
+                    </button>
+                  </div>
+                  {appointmentsOpen ? (
+                    <div className="mt-1 mb-2 ml-11 mr-4 space-y-1">
+                      {appointmentSubLinks.map((sub) => (
+                        <NavLink
+                          key={sub.to}
+                          to={sub.to}
+                          end={sub.end}
+                          className={({ isActive }) =>
+                            `block rounded-lg px-3 py-2 text-xs transition-colors ${
+                              isActive ? "bg-blue-50 text-blue-600" : "text-gray-500 hover:text-gray-700 hover:bg-gray-50"
+                            }`
+                          }
+                        >
+                          {sub.label}
+                        </NavLink>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })
+            : null}
           {isAdmin ? (
             <div className="mt-4">
               <div className="px-5 py-2 text-xs uppercase tracking-wide text-gray-400">Admin</div>
@@ -327,7 +395,7 @@ export default function PortalShell({ children }) {
             <button
               type="button"
               onClick={() => setMenuOpen((prev) => !prev)}
-              className="md:hidden p-2 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"
+              className="p-2 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"
               aria-label="Toggle navigation"
             >
               <LayoutGrid className="w-5 h-5" />

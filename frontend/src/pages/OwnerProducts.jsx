@@ -381,7 +381,7 @@ export default function OwnerProducts() {
           </div>
 
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-            <div className="overflow-auto">
+            <div className="overflow-auto overflow-x-auto">
               <table className="min-w-full text-sm">
                 <thead className="bg-slate-50 border-b border-slate-200">
                   <tr>
@@ -651,7 +651,7 @@ export default function OwnerProducts() {
                     </div>
                   </div>
                   <div className="rounded-2xl border border-slate-200 overflow-hidden">
-                    <div className="max-h-[320px] overflow-auto bg-white">
+                    <div className="max-h-[320px] overflow-auto overflow-x-auto bg-white">
                       <table className="min-w-full text-xs">
                         <thead className="bg-slate-50 sticky top-0">
                           <tr>

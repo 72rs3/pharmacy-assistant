@@ -53,7 +53,7 @@ def _send_via_smtp(to_email: str, subject: str, body: str) -> tuple[bool, str | 
 
 
 def send_email(to_email: str, subject: str, body: str) -> tuple[bool, str | None]:
-    html = f"<p>{body.replace(chr(10), '<br/>')}</p>"
+    html = body if "<" in body else f"<p>{body.replace(chr(10), '<br/>')}</p>"
     ok, error = _send_via_resend(to_email, subject, html)
     if ok:
         return True, None
