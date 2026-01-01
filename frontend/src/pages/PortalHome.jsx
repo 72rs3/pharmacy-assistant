@@ -65,7 +65,7 @@ export default function PortalHome() {
         api.get("/medicines/owner"),
         api.get("/orders/owner"),
         api.get("/appointments/owner"),
-        api.get("/ai/escalations/owner"),
+        api.get("/admin/pharmacist/sessions", { params: { status_filter: "ESCALATED" } }),
       ]);
       setMedicines(Array.isArray(medRes.data) ? medRes.data : []);
       setOrders(Array.isArray(orderRes.data) ? orderRes.data : []);

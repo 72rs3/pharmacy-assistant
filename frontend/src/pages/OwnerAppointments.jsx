@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Copy, Phone, RefreshCw } from "lucide-react";
+import { Calendar, ChevronDown, Copy, Phone, RefreshCw, Search } from "lucide-react";
 import api from "../api/axios";
 
 const formatDate = (value) => {
@@ -19,10 +19,11 @@ const toLocalInputValue = (value) => {
 
 const statusPill = (status) => {
   const normalized = String(status ?? "").toUpperCase();
+  if (normalized === "PENDING") return "bg-blue-100 text-blue-700 border-blue-200";
   if (normalized === "CONFIRMED") return "bg-emerald-100 text-emerald-800 border-emerald-200";
   if (normalized === "COMPLETED") return "bg-blue-100 text-blue-800 border-blue-200";
   if (normalized === "CANCELLED") return "bg-red-100 text-red-800 border-red-200";
-  return "bg-slate-100 text-slate-800 border-slate-200";
+  return "bg-gray-100 text-gray-700 border-gray-200";
 };
 
 const statusAccent = (status) => {
@@ -30,7 +31,7 @@ const statusAccent = (status) => {
   if (normalized === "CONFIRMED") return "border-l-emerald-400";
   if (normalized === "COMPLETED") return "border-l-blue-400";
   if (normalized === "CANCELLED") return "border-l-red-400";
-  return "border-l-amber-300";
+  return "border-l-yellow-400";
 };
 
 const STATUS_OPTIONS = ["PENDING", "CONFIRMED", "CANCELLED", "COMPLETED"];
@@ -96,9 +97,9 @@ const formatAuditDetails = (entry) => {
       .map((key) => {
         const prev = oldValues[key];
         const next = newValues[key];
-        return `${key}: ${prev ?? "-"} → ${next ?? "-"}`;
+        return `${key}: ${prev ?? "-"} -> ${next ?? "-"}`;
       })
-      .join(" · ");
+      .join(" | ");
   } catch {
     return null;
   }
@@ -446,30 +447,30 @@ export default function OwnerAppointments({ view = "overview" }) {
 
   const renderNextUpBody = () => {
     if (isLoadingNextUp) {
-      return <div className="text-sm text-slate-500 mt-3">Loading...</div>;
+      return <div className="text-sm text-gray-500 mt-3">Loading...</div>;
     }
     if (!nextUp.length) {
-      return <div className="text-sm text-slate-500 mt-3">No upcoming appointments.</div>;
+      return <div className="text-sm text-gray-500 mt-3">No upcoming appointments.</div>;
     }
     return (
       <div className="mt-3 space-y-3">
         {nextUp.map((appt) => (
-          <div key={appt.id} className="rounded-xl border border-slate-200 p-3">
-            <div className="text-sm font-medium text-slate-900">{appt.customer_name ?? "Customer"}</div>
-            <div className="text-xs text-slate-500">
-              {appt.type ?? "Appointment"} · {formatDate(appt.scheduled_time)}
+          <div key={appt.id} className="rounded-lg border border-gray-200 bg-gray-50/60 p-3">
+            <div className="text-sm font-semibold text-gray-900">{appt.customer_name ?? "Customer"}</div>
+            <div className="text-xs text-gray-500 mt-1">
+              {appt.type ?? "Appointment"} | {formatDate(appt.scheduled_time)}
             </div>
-            <div className="mt-2 flex flex-wrap gap-2">
+            <div className="mt-3 flex flex-wrap items-center gap-2">
               {appt.customer_phone ? (
                 <a
                   href={`tel:${appt.customer_phone}`}
-                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-slate-200 bg-white text-xs text-slate-700 hover:bg-slate-50"
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 bg-white text-xs text-gray-700 hover:bg-gray-50"
                 >
                   <Phone className="w-3.5 h-3.5" />
                   Call
                 </a>
               ) : null}
-              <span className={`inline-flex items-center px-2.5 py-1 rounded-full border text-[11px] ${statusPill(appt.status)}`}>
+              <span className={`inline-flex items-center px-2.5 py-1 rounded-lg border text-[11px] ${statusPill(appt.status)}`}>
                 {appt.status}
               </span>
             </div>
@@ -484,18 +485,18 @@ export default function OwnerAppointments({ view = "overview" }) {
       return <div className="text-xs text-red-600 mt-2">{availabilityError}</div>;
     }
     if (isLoadingAvailability) {
-      return <div className="text-sm text-slate-500 mt-3">Loading slots…</div>;
+      return <div className="text-sm text-gray-500 mt-3">Loading slots...</div>;
     }
     if (!availability.length) {
-      return <div className="text-sm text-slate-500 mt-3">No slots for this day.</div>;
+      return <div className="text-sm text-gray-500 mt-3">No slots for this day.</div>;
     }
     return (
       <div className="mt-3 space-y-2 max-h-[360px] overflow-auto pr-1">
         {availability.map((slot) => (
           <div
             key={slot.start}
-            className={`flex items-center justify-between rounded-lg border px-3 py-2 text-xs ${
-              slot.booked ? "border-amber-200 bg-amber-50 text-amber-900" : "border-slate-200 bg-white text-slate-700"
+            className={`flex items-center justify-between rounded-lg border px-3 py-2 text-[11px] ${
+              slot.booked ? "border-amber-200 bg-amber-50 text-amber-900" : "border-gray-200 bg-white text-gray-700"
             }`}
           >
             <span>
@@ -511,15 +512,15 @@ export default function OwnerAppointments({ view = "overview" }) {
 
   const renderWeekViewBody = () => {
     if (isLoadingWeek) {
-      return <div className="text-sm text-slate-500 mt-3">Loading week view…</div>;
+      return <div className="text-sm text-gray-500 mt-3">Loading week view...</div>;
     }
     if (!weekSlots.length) {
-      return <div className="text-sm text-slate-500 mt-3">No slots for this week.</div>;
+      return <div className="text-sm text-gray-500 mt-3">No slots for this week.</div>;
     }
     return (
       <div className="mt-3 overflow-auto">
         <div className="grid gap-2" style={{ minWidth: "540px" }}>
-          <div className="grid grid-cols-[90px_repeat(7,1fr)] gap-2 text-[11px] text-slate-500">
+          <div className="grid grid-cols-[90px_repeat(7,1fr)] gap-2 text-[11px] text-gray-500">
             <div></div>
             {weekSlots.map((day) => (
               <div key={day.date.toISOString()} className="text-center">
@@ -535,7 +536,7 @@ export default function OwnerAppointments({ view = "overview" }) {
             const timeLabel = new Date(firstSlot.start).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
             return (
               <div key={firstSlot.start} className="grid grid-cols-[90px_repeat(7,1fr)] gap-2">
-                <div className="text-[11px] text-slate-500 text-right pr-2">{timeLabel}</div>
+                <div className="text-[11px] text-gray-500 text-right pr-2">{timeLabel}</div>
                 {weekSlots.map((day) => {
                   const slotMatch = day.slots[rowIdx];
                   const slotStart = slotMatch?.start;
@@ -560,7 +561,7 @@ export default function OwnerAppointments({ view = "overview" }) {
                           ? "border-blue-300 bg-blue-50"
                           : slotMatch?.booked
                           ? "border-amber-200 bg-amber-50"
-                          : "border-slate-200 bg-white"
+                          : "border-gray-200 bg-white"
                       }`}
                     >
                       {appointmentsForSlot.map((appt) => (
@@ -568,7 +569,7 @@ export default function OwnerAppointments({ view = "overview" }) {
                           key={appt.id}
                           draggable
                           onDragStart={(event) => event.dataTransfer.setData("text/plain", String(appt.id))}
-                          className="rounded-md bg-slate-900 text-white px-2 py-1 mb-1"
+                          className="rounded-md bg-gray-900 text-white px-2 py-1 mb-1"
                         >
                           <div className="font-medium">{appt.customer_name ?? "Customer"}</div>
                           <div className="text-[10px] opacity-80">{appt.type ?? "Appointment"}</div>
@@ -587,11 +588,11 @@ export default function OwnerAppointments({ view = "overview" }) {
 
   return (
     <div className="max-w-6xl mx-auto">
-      <div className="bg-white rounded-2xl shadow-[0_24px_60px_rgba(15,23,42,0.12)] border border-slate-200 overflow-hidden">
-        <div className="px-6 py-5 flex items-center justify-between gap-4 border-b border-slate-200">
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+        <div className="px-6 py-5 flex items-center justify-between gap-4 border-b border-gray-200">
           <div className="min-w-0">
-            <h1 className="text-3xl font-semibold text-slate-900 tracking-tight">Appointments</h1>
-            <p className="text-sm text-slate-500 mt-1">Confirm bookings and keep the schedule updated.</p>
+            <h1 className="text-3xl font-semibold text-gray-900 tracking-tight">Appointments</h1>
+            <p className="text-sm text-gray-500 mt-1">Confirm bookings and keep the schedule updated.</p>
           </div>
 
           <div className="flex items-center gap-2">
@@ -600,7 +601,7 @@ export default function OwnerAppointments({ view = "overview" }) {
                 type="button"
                 onClick={loadAppointments}
                 disabled={isLoading}
-                className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-60"
                 title="Refresh"
               >
                 <RefreshCw className="w-4 h-4" />
@@ -610,13 +611,13 @@ export default function OwnerAppointments({ view = "overview" }) {
           </div>
         </div>
 
-        <div className="p-6 bg-slate-50/60 space-y-4">
-          {error ? <div className="rounded-xl border border-red-200 bg-red-50 text-red-800 px-4 py-3 text-sm">{error}</div> : null}
+        <div className="p-6 bg-gray-50 space-y-4">
+          {error ? <div className="rounded-lg border border-red-200 bg-red-50 text-red-800 px-4 py-3 text-sm">{error}</div> : null}
           {actionError ? (
-            <div className="rounded-xl border border-red-200 bg-red-50 text-red-800 px-4 py-3 text-sm">{actionError}</div>
+            <div className="rounded-lg border border-red-200 bg-red-50 text-red-800 px-4 py-3 text-sm">{actionError}</div>
           ) : null}
           {actionMessage ? (
-            <div className="rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-800 px-4 py-3 text-sm">
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-800 px-4 py-3 text-sm">
               {actionMessage}
             </div>
           ) : null}
@@ -625,46 +626,60 @@ export default function OwnerAppointments({ view = "overview" }) {
             <div className="space-y-4">
           {isOverview ? (
             <>
-          <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 md:p-5 space-y-4">
-            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Filters</div>
-            <div className="flex flex-wrap gap-3 items-center">
-              <input
-                value={searchDraft}
-                onChange={(event) => setSearchDraft(event.target.value)}
-                placeholder="Search name, phone, type…"
-                className="flex-1 min-w-[220px] px-4 py-2.5 rounded-xl border border-slate-200 bg-white text-sm focus:outline-none focus:ring-4 focus:ring-blue-100"
-              />
-              <select
-                value={statusFilter}
-                onChange={(event) => setStatusFilter(event.target.value)}
-                className="px-3 py-2.5 rounded-xl border border-slate-200 bg-white text-sm focus:outline-none focus:ring-4 focus:ring-blue-100"
-                title="Filter status"
-              >
-                <option value="ALL">Filter status</option>
-                {STATUS_OPTIONS.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={sortMode}
-                onChange={(event) => setSortMode(event.target.value)}
-                className="px-3 py-2.5 rounded-xl border border-slate-200 bg-white text-sm focus:outline-none focus:ring-4 focus:ring-blue-100"
-                title="Sort"
-              >
-                {SORT_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-              <input
-                value={typeFilter}
-                onChange={(event) => setTypeFilter(event.target.value)}
-                placeholder="Filter by type…"
-                className="min-w-[180px] px-3 py-2.5 rounded-xl border border-slate-200 bg-white text-sm focus:outline-none focus:ring-4 focus:ring-blue-100"
-              />
+          <section className="bg-white rounded-lg border border-gray-200 shadow-sm p-5 space-y-4">
+            <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Filters</div>
+            <div className="grid gap-3 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <input
+                  value={searchDraft}
+                  onChange={(event) => setSearchDraft(event.target.value)}
+                  placeholder="Search name, phone, type..."
+                  className="w-full pl-10 pr-4 py-2.5 rounded-lg border border-gray-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div className="relative">
+                <select
+                  value={statusFilter}
+                  onChange={(event) => setStatusFilter(event.target.value)}
+                  className="w-full px-4 py-2.5 rounded-lg border border-gray-200 bg-white text-sm appearance-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  title="Filter status"
+                >
+                  <option value="ALL">Filter status</option>
+                  {STATUS_OPTIONS.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+              </div>
+            </div>
+            <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+              <div className="relative">
+                <select
+                  value={sortMode}
+                  onChange={(event) => setSortMode(event.target.value)}
+                  className="w-full px-4 py-2.5 rounded-lg border border-gray-200 bg-white text-sm appearance-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  title="Sort"
+                >
+                  {SORT_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+              </div>
+              <div className="relative">
+                <input
+                  value={typeFilter}
+                  onChange={(event) => setTypeFilter(event.target.value)}
+                  placeholder="Filter by type..."
+                  className="w-full px-4 py-2.5 rounded-lg border border-gray-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+              </div>
             </div>
 
             <div className="flex flex-wrap gap-2">
@@ -682,10 +697,10 @@ export default function OwnerAppointments({ view = "overview" }) {
                         setStatusFilter("ALL");
                       }
                     }}
-                    className={`px-4 py-2 rounded-full border text-xs transition ${
+                    className={`px-4 py-2 rounded-lg text-xs transition ${
                       isActive
-                        ? "border-blue-600 bg-blue-600 text-white"
-                        : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                        ? "bg-blue-600 text-white shadow-sm"
+                        : "bg-gray-100 text-gray-700 hover:bg-gray-200"
                     }`}
                   >
                     {tab.label}
@@ -694,48 +709,46 @@ export default function OwnerAppointments({ view = "overview" }) {
               })}
             </div>
 
-            <div className="flex flex-wrap gap-2 items-center">
-              <span className="inline-flex items-center px-3 py-1.5 rounded-full border border-slate-200 bg-slate-50 text-xs text-slate-700">
-                Total: {counts.total}
+            <div className="flex flex-wrap items-center gap-4 text-xs text-gray-600">
+              <span>
+                Total: <span className="font-medium text-gray-700">{counts.total}</span>
               </span>
-              <span className="inline-flex items-center px-3 py-1.5 rounded-full border border-slate-200 bg-slate-50 text-xs text-slate-700">
-                Pending: {counts.pending}
+              <span>
+                Pending: <span className="font-medium text-gray-700">{counts.pending}</span>
               </span>
-              <span className="inline-flex items-center px-3 py-1.5 rounded-full border border-slate-200 bg-slate-50 text-xs text-slate-700">
-                Confirmed: {counts.confirmed}
+              <span>
+                Confirmed: <span className="font-medium text-gray-700">{counts.confirmed}</span>
               </span>
-              <span className="inline-flex items-center px-3 py-1.5 rounded-full border border-slate-200 bg-slate-50 text-xs text-slate-700">
-                Completed: {counts.completed}
+              <span>
+                Completed: <span className="font-medium text-gray-700">{counts.completed}</span>
               </span>
-              <span className="inline-flex items-center px-3 py-1.5 rounded-full border border-slate-200 bg-slate-50 text-xs text-slate-700">
-                Cancelled: {counts.cancelled}
+              <span>
+                Cancelled: <span className="font-medium text-gray-700">{counts.cancelled}</span>
               </span>
-              <span className="ml-auto text-xs text-slate-500">
-                Showing {pageStart}-{pageEnd} of {totalCount}
-              </span>
+              <span className="ml-auto">Showing {pageStart}-{pageEnd} of {totalCount}</span>
             </div>
           </section>
 
           {appointments.length === 0 && !isLoading ? (
-            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-8 text-slate-600 text-sm">
+            <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-8 text-gray-600 text-sm">
               No appointments booked yet.
             </div>
           ) : (
             <div className="space-y-4">
               <div className="flex items-center justify-between">
-                <div className="text-sm font-semibold text-slate-900">Appointments</div>
-                <div className="text-xs text-slate-500">Manage updates and reminders</div>
+                <div className="text-sm font-semibold text-gray-900">Appointments</div>
+                <div className="text-xs text-blue-600 hover:text-blue-700 cursor-pointer">Manage updates and reminders</div>
               </div>
               {appointments.map((appt) => (
                 <section
                   key={appt.id}
-                  className={`bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden border-l-4 ${statusAccent(appt.status)}`}
+                  className={`bg-white rounded-lg border border-gray-200 shadow-sm border-l-4 ${statusAccent(appt.status)}`}
                 >
-                  <div className="px-6 py-5 border-b border-slate-200 flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
-                    <div>
-                      <div className="flex items-center gap-3">
-                        <h2 className="text-xl font-semibold text-slate-900">Appointment #{appt.id}</h2>
-                        <span className={`inline-flex items-center px-2.5 py-1 rounded-full border text-xs ${statusPill(appt.status)}`}>
+                  <div className="px-6 py-5 border-b border-gray-200 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,0.9fr)]">
+                    <div className="space-y-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h2 className="text-lg font-semibold text-gray-900">Appointment #{appt.id}</h2>
+                        <span className={`inline-flex items-center px-3 py-1 rounded-full border text-xs ${statusPill(appt.status)}`}>
                           {appt.status}
                         </span>
                         {appt.no_show ? (
@@ -743,94 +756,83 @@ export default function OwnerAppointments({ view = "overview" }) {
                             No-show
                           </span>
                         ) : null}
-                        {remindersById[appt.id]?.length ? (
-                          <span className="inline-flex items-center px-2.5 py-1 rounded-full border border-slate-200 bg-slate-50 text-[11px] text-slate-600">
-                            Reminders: {remindersById[appt.id].filter((r) => r.status === "SENT").length} sent
-                          </span>
-                        ) : null}
-                        {appt.updated_at ? (
-                          <span className="text-[11px] text-slate-400">Last updated: {formatDate(appt.updated_at)}</span>
-                        ) : null}
                       </div>
-                      <div className="text-sm text-slate-500 mt-1">
-                        {appt.type ?? "Appointment"} - {formatDate(appt.scheduled_time)}
+                      <div className="text-sm text-gray-600">
+                        {appt.type ?? "Appointment"} <span className="mx-2">|</span> {formatDate(appt.scheduled_time)}
                       </div>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2 text-xs">
-                      <span className="inline-flex items-center px-2.5 py-1 rounded-full border border-slate-200 bg-slate-50 text-slate-800">
-                        Customer: {appt.customer_name ?? "--"}
-                      </span>
-                      <span className="inline-flex items-center px-2.5 py-1 rounded-full border border-slate-200 bg-slate-50 text-slate-800">
-                        Phone: {appt.customer_phone ?? "--"}
-                      </span>
-                      {appt.customer_email ? (
-                        <span className="inline-flex items-center px-2.5 py-1 rounded-full border border-slate-200 bg-slate-50 text-slate-800">
-                          Email: {appt.customer_email}
-                        </span>
+                      {appt.updated_at ? (
+                        <div className="text-xs text-gray-400">Last updated: {formatDate(appt.updated_at)}</div>
                       ) : null}
-                      {appt.customer_phone ? (
-                        <a
-                          href={`tel:${appt.customer_phone}`}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                          title="Call customer"
-                        >
-                          <Phone className="w-3.5 h-3.5" />
-                          Call
-                        </a>
-                      ) : null}
-                      {appt.customer_phone ? (
+                      <div className="flex flex-wrap gap-3 pt-1 text-xs">
+                        {appt.customer_phone ? (
+                          <a
+                            href={`tel:${appt.customer_phone}`}
+                            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
+                            title="Call customer"
+                          >
+                            <Phone className="w-3.5 h-3.5" />
+                            Call
+                          </a>
+                        ) : null}
+                        {appt.customer_phone ? (
+                          <button
+                            type="button"
+                            onClick={() => navigator.clipboard?.writeText(appt.customer_phone)}
+                            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
+                            title="Copy phone"
+                          >
+                            <Copy className="w-3.5 h-3.5" />
+                            Copy
+                          </button>
+                        ) : null}
                         <button
                           type="button"
-                          onClick={() => navigator.clipboard?.writeText(appt.customer_phone)}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                          title="Copy phone"
+                          onClick={() => {
+                            setAuditOpenById((prev) => ({ ...prev, [appt.id]: !prev[appt.id] }));
+                            if (!auditById[appt.id]) {
+                              loadAudits(appt.id);
+                            }
+                          }}
+                          className="inline-flex items-center px-4 py-2 rounded-lg border border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
                         >
-                          <Copy className="w-3.5 h-3.5" />
-                          Copy
+                          History
                         </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setRemindersOpenById((prev) => ({ ...prev, [appt.id]: !prev[appt.id] }));
+                            if (!remindersById[appt.id]) {
+                              loadReminders(appt.id);
+                            }
+                          }}
+                          className="inline-flex items-center px-4 py-2 rounded-lg border border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
+                        >
+                          Reminders
+                        </button>
+                      </div>
+                    </div>
+                    <div className="grid gap-2 text-xs lg:text-right">
+                      <div className="text-gray-700 font-medium">Customer: {appt.customer_name ?? "--"}</div>
+                      <div className="text-gray-600">Phone: {appt.customer_phone ?? "--"}</div>
+                      {appt.customer_email ? (
+                        <div className="text-gray-600 break-all">Email: {appt.customer_email}</div>
                       ) : null}
                       {appt.vaccine_name ? (
-                        <span className="inline-flex items-center px-2.5 py-1 rounded-full border border-slate-200 bg-slate-50 text-slate-800">
-                          Vaccine: {appt.vaccine_name}
-                        </span>
+                        <div className="text-gray-600">Vaccine: {appt.vaccine_name}</div>
                       ) : null}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setAuditOpenById((prev) => ({ ...prev, [appt.id]: !prev[appt.id] }));
-                          if (!auditById[appt.id]) {
-                            loadAudits(appt.id);
-                          }
-                        }}
-                        className="inline-flex items-center px-2.5 py-1 rounded-full border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                      >
-                        History
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setRemindersOpenById((prev) => ({ ...prev, [appt.id]: !prev[appt.id] }));
-                          if (!remindersById[appt.id]) {
-                            loadReminders(appt.id);
-                          }
-                        }}
-                        className="inline-flex items-center px-2.5 py-1 rounded-full border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                      >
-                        Reminders
-                      </button>
                     </div>
                   </div>
 
-                  <div className="px-6 py-5 bg-slate-50/70 grid gap-3 md:grid-cols-[1fr_1fr_auto] md:items-end">
+                  <div className="px-6 py-5 bg-white grid gap-4 md:flex md:flex-wrap md:items-end">
                     <div>
-                      <label className="block text-xs font-medium text-slate-600 mb-1" htmlFor={`appt-status-${appt.id}`}>
+                      <label className="block text-sm text-gray-600 mb-1" htmlFor={`appt-status-${appt.id}`}>
                         Status
                       </label>
                       <select
                         id={`appt-status-${appt.id}`}
                         value={statusById[appt.id] ?? appt.status}
                         onChange={(event) => setStatusById((prev) => ({ ...prev, [appt.id]: event.target.value }))}
-                        className="w-full md:w-64 px-4 py-3 rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-4 focus:ring-blue-100"
+                        className="w-44 px-4 py-2.5 rounded-lg border border-gray-200 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                       >
                         {STATUS_OPTIONS.map((option) => (
                           <option key={option} value={option}>
@@ -840,23 +842,26 @@ export default function OwnerAppointments({ view = "overview" }) {
                       </select>
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-slate-600 mb-1" htmlFor={`appt-time-${appt.id}`}>
+                      <label className="block text-sm text-gray-600 mb-1" htmlFor={`appt-time-${appt.id}`}>
                         Reschedule time
                       </label>
-                      <input
-                        id={`appt-time-${appt.id}`}
-                        type="datetime-local"
-                        value={timeById[appt.id] ?? ""}
-                        onChange={(event) => setTimeById((prev) => ({ ...prev, [appt.id]: event.target.value }))}
-                        className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-4 focus:ring-blue-100"
-                      />
+                      <div className="relative">
+                        <input
+                          id={`appt-time-${appt.id}`}
+                          type="datetime-local"
+                          value={timeById[appt.id] ?? ""}
+                          onChange={(event) => setTimeById((prev) => ({ ...prev, [appt.id]: event.target.value }))}
+                          className="w-60 px-4 py-2.5 rounded-lg border border-gray-200 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 pr-10"
+                        />
+                        <Calendar className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                      </div>
                     </div>
-                    <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-3">
                       <button
                         type="button"
                         onClick={() => updateAppointment(appt.id)}
                         disabled={isSavingId === appt.id}
-                        className="px-5 py-3 rounded-xl bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60"
+                        className="px-6 py-2.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60"
                       >
                         {isSavingId === appt.id ? "Updating..." : "Update"}
                       </button>
@@ -865,7 +870,7 @@ export default function OwnerAppointments({ view = "overview" }) {
                           type="button"
                           onClick={() => markNoShow(appt.id)}
                           disabled={isSavingId === appt.id}
-                          className="px-4 py-3 rounded-xl border border-red-200 text-red-700 hover:bg-red-50 disabled:opacity-60"
+                          className="px-6 py-2.5 text-sm text-red-600 hover:bg-red-50 rounded-lg disabled:opacity-60"
                         >
                           Mark no-show
                         </button>
@@ -874,33 +879,33 @@ export default function OwnerAppointments({ view = "overview" }) {
                   </div>
                   {auditOpenById[appt.id] ? (
                     <div className="px-6 pb-5">
-                      <div className="text-xs text-slate-500 mb-2">Audit trail</div>
+                      <div className="text-xs text-gray-500 mb-2">Audit trail</div>
                       {auditById[appt.id] && auditById[appt.id].length ? (
                         <div className="space-y-2">
                           {auditById[appt.id].map((entry) => (
-                            <div key={entry.id} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                            <div key={entry.id} className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-700">
                               <div className="font-medium">{entry.action}</div>
                               {formatAuditDetails(entry) ? (
-                                <div className="text-[11px] text-slate-600">{formatAuditDetails(entry)}</div>
+                                <div className="text-[11px] text-gray-600">{formatAuditDetails(entry)}</div>
                               ) : null}
-                              <div className="text-[11px] text-slate-500">{formatDate(entry.created_at)}</div>
+                              <div className="text-[11px] text-gray-500">{formatDate(entry.created_at)}</div>
                             </div>
                           ))}
                         </div>
                       ) : (
-                        <div className="text-xs text-slate-500">No audit history yet.</div>
+                        <div className="text-xs text-gray-500">No audit history yet.</div>
                       )}
                     </div>
                   ) : null}
                   {remindersOpenById[appt.id] ? (
                     <div className="px-6 pb-5">
                       <div className="flex items-center justify-between">
-                        <div className="text-xs text-slate-500">Reminder status</div>
+                        <div className="text-xs text-gray-500">Reminder status</div>
                         <div className="flex items-center gap-2">
                           <button
                             type="button"
                             onClick={() => loadReminders(appt.id)}
-                            className="text-xs text-slate-500 hover:text-slate-700"
+                            className="text-xs text-gray-500 hover:text-gray-700"
                           >
                             Refresh
                           </button>
@@ -920,7 +925,7 @@ export default function OwnerAppointments({ view = "overview" }) {
                                 setActionError(e?.response?.data?.detail ?? "Failed to load preview");
                               }
                             }}
-                            className="text-xs text-slate-500 hover:text-slate-700"
+                            className="text-xs text-gray-500 hover:text-gray-700"
                           >
                             Preview
                           </button>
@@ -938,7 +943,7 @@ export default function OwnerAppointments({ view = "overview" }) {
                                 setActionError(e?.response?.data?.detail ?? "Failed to send test email");
                               }
                             }}
-                            className="text-xs text-slate-500 hover:text-slate-700"
+                            className="text-xs text-gray-500 hover:text-gray-700"
                           >
                             Send test
                           </button>
@@ -947,14 +952,14 @@ export default function OwnerAppointments({ view = "overview" }) {
                       {remindersById[appt.id] && remindersById[appt.id].length ? (
                         <div className="mt-2 space-y-2">
                           {remindersById[appt.id].map((reminder) => (
-                            <div key={reminder.id} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                            <div key={reminder.id} className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-700">
                               <div className="flex items-center justify-between">
-                                <span>{reminder.template} · {reminder.channel}</span>
-                                <span className="text-[11px] text-slate-500">{reminder.status}</span>
+                                <span>{reminder.template} | {reminder.channel}</span>
+                                <span className="text-[11px] text-gray-500">{reminder.status}</span>
                               </div>
-                              <div className="text-[11px] text-slate-500">Send at: {formatDate(reminder.send_at)}</div>
+                              <div className="text-[11px] text-gray-500">Send at: {formatDate(reminder.send_at)}</div>
                               {reminder.sent_at ? (
-                                <div className="text-[11px] text-slate-500">Sent at: {formatDate(reminder.sent_at)}</div>
+                                <div className="text-[11px] text-gray-500">Sent at: {formatDate(reminder.sent_at)}</div>
                               ) : null}
                               {reminder.error_message ? (
                                 <div className="text-[11px] text-red-600">Error: {reminder.error_message}</div>
@@ -963,7 +968,7 @@ export default function OwnerAppointments({ view = "overview" }) {
                           ))}
                         </div>
                       ) : (
-                        <div className="text-xs text-slate-500 mt-2">No reminders scheduled yet.</div>
+                        <div className="text-xs text-gray-500 mt-2">No reminders scheduled yet.</div>
                       )}
                     </div>
                   ) : null}
@@ -972,34 +977,36 @@ export default function OwnerAppointments({ view = "overview" }) {
             </div>
           )}
 
-          <div className="flex items-center justify-between pt-2">
-            <button
-              type="button"
-              onClick={() => setPageIndex((prev) => Math.max(0, prev - 1))}
-              disabled={pageIndex === 0}
-              className="px-3 py-2 rounded-xl border border-slate-200 text-sm text-slate-700 disabled:opacity-50"
-            >
-              Previous
-            </button>
-            <span className="text-xs text-slate-500">
+          <div className="mt-4 flex items-center justify-between rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-500">
+            <span>
               Page {pageIndex + 1} of {totalPages}
             </span>
-            <button
-              type="button"
-              onClick={() => setPageIndex((prev) => Math.min(totalPages - 1, prev + 1))}
-              disabled={pageIndex >= totalPages - 1}
-              className="px-3 py-2 rounded-xl border border-slate-200 text-sm text-slate-700 disabled:opacity-50"
-            >
-              Next
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setPageIndex((prev) => Math.max(0, prev - 1))}
+                disabled={pageIndex === 0}
+                className="px-3 py-1 text-gray-400 hover:text-gray-600 disabled:opacity-40"
+              >
+                Previous
+              </button>
+              <button
+                type="button"
+                onClick={() => setPageIndex((prev) => Math.min(totalPages - 1, prev + 1))}
+                disabled={pageIndex >= totalPages - 1}
+                className="px-3 py-1 text-gray-400 hover:text-gray-600 disabled:opacity-40"
+              >
+                Next
+              </button>
+            </div>
           </div>
             </>
           ) : (
             <div className="space-y-4">
               {isScheduleView ? (
-                <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+                <section className="bg-white rounded-lg border border-gray-200 shadow-sm p-5">
                   <div className="flex items-center justify-between gap-2">
-                    <h3 className="text-base font-semibold text-slate-900">Schedule settings</h3>
+                    <h3 className="text-base font-semibold text-gray-900">Schedule settings</h3>
                     <button
                       type="button"
                       onClick={saveSettings}
@@ -1013,7 +1020,7 @@ export default function OwnerAppointments({ view = "overview" }) {
                   <div className="mt-3 grid gap-3">
                     <div className="grid grid-cols-2 gap-2">
                       <div>
-                        <label className="block text-[11px] text-slate-500 mb-1">Slot (minutes)</label>
+                        <label className="block text-[11px] text-gray-500 mb-1">Slot (minutes)</label>
                         <input
                           type="number"
                           min="5"
@@ -1021,11 +1028,11 @@ export default function OwnerAppointments({ view = "overview" }) {
                           onChange={(event) =>
                             setSettingsDraft((prev) => ({ ...prev, slot_minutes: Number(event.target.value) }))
                           }
-                          className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm"
+                          className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm"
                         />
                       </div>
                       <div>
-                        <label className="block text-[11px] text-slate-500 mb-1">Buffer (minutes)</label>
+                        <label className="block text-[11px] text-gray-500 mb-1">Buffer (minutes)</label>
                         <input
                           type="number"
                           min="0"
@@ -1033,13 +1040,13 @@ export default function OwnerAppointments({ view = "overview" }) {
                           onChange={(event) =>
                             setSettingsDraft((prev) => ({ ...prev, buffer_minutes: Number(event.target.value) }))
                           }
-                          className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm"
+                          className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm"
                         />
                       </div>
                     </div>
                     <div className="grid grid-cols-2 gap-2">
                       <div>
-                        <label className="block text-[11px] text-slate-500 mb-1">No-show after (minutes)</label>
+                        <label className="block text-[11px] text-gray-500 mb-1">No-show after (minutes)</label>
                         <input
                           type="number"
                           min="5"
@@ -1047,15 +1054,15 @@ export default function OwnerAppointments({ view = "overview" }) {
                           onChange={(event) =>
                             setSettingsDraft((prev) => ({ ...prev, no_show_minutes: Number(event.target.value) }))
                           }
-                          className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm"
+                          className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm"
                         />
                       </div>
                       <div>
-                        <label className="block text-[11px] text-slate-500 mb-1">Reminder language</label>
+                        <label className="block text-[11px] text-gray-500 mb-1">Reminder language</label>
                         <select
                           value={settingsDraft.locale}
                           onChange={(event) => setSettingsDraft((prev) => ({ ...prev, locale: event.target.value }))}
-                          className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm bg-white"
+                          className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white"
                         >
                           <option value="en">English</option>
                           <option value="ar">Arabic</option>
@@ -1064,11 +1071,11 @@ export default function OwnerAppointments({ view = "overview" }) {
                       </div>
                     </div>
                     <div>
-                      <label className="block text-[11px] text-slate-500 mb-1">Timezone</label>
+                      <label className="block text-[11px] text-gray-500 mb-1">Timezone</label>
                       <input
                         value={settingsDraft.timezone}
                         onChange={(event) => setSettingsDraft((prev) => ({ ...prev, timezone: event.target.value }))}
-                        className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm"
+                        className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm"
                       />
                     </div>
                     <div className="space-y-2">
@@ -1079,7 +1086,7 @@ export default function OwnerAppointments({ view = "overview" }) {
                         const end = enabled ? slots[0].end : "18:00";
                         return (
                           <div key={day.key} className="grid grid-cols-[auto_1fr_1fr] items-center gap-2">
-                            <label className="text-xs text-slate-600 flex items-center gap-2">
+                            <label className="text-xs text-gray-600 flex items-center gap-2">
                               <input
                                 type="checkbox"
                                 checked={enabled}
@@ -1100,7 +1107,7 @@ export default function OwnerAppointments({ view = "overview" }) {
                                 next[day.key] = [{ start: event.target.value, end }];
                                 setSettingsDraft((prev) => ({ ...prev, weekly_hours: next }));
                               }}
-                              className="px-2 py-1 rounded-lg border border-slate-200 text-xs"
+                              className="px-2 py-1 rounded-lg border border-gray-200 text-xs"
                             />
                             <input
                               type="time"
@@ -1111,20 +1118,20 @@ export default function OwnerAppointments({ view = "overview" }) {
                                 next[day.key] = [{ start, end: event.target.value }];
                                 setSettingsDraft((prev) => ({ ...prev, weekly_hours: next }));
                               }}
-                              className="px-2 py-1 rounded-lg border border-slate-200 text-xs"
+                              className="px-2 py-1 rounded-lg border border-gray-200 text-xs"
                             />
                           </div>
                         );
                       })}
                     </div>
                   </div>
-                  {!settings ? <div className="text-xs text-slate-500 mt-2">Using default hours until saved.</div> : null}
+                  {!settings ? <div className="text-xs text-gray-500 mt-2">Using default hours until saved.</div> : null}
                 </section>
               ) : null}
               {isWeekView ? (
-                <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+                <section className="bg-white rounded-lg border border-gray-200 shadow-sm p-5">
                   <div className="flex items-center justify-between gap-2">
-                    <h3 className="text-base font-semibold text-slate-900">Week view</h3>
+                    <h3 className="text-base font-semibold text-gray-900">Week view</h3>
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
@@ -1132,7 +1139,7 @@ export default function OwnerAppointments({ view = "overview" }) {
                           const next = addDays(new Date(weekStart), -7);
                           setWeekStart(next.toISOString().slice(0, 10));
                         }}
-                        className="px-2 py-1 rounded-lg border border-slate-200 text-xs text-slate-600"
+                        className="px-2 py-1 rounded-lg border border-gray-200 text-xs text-gray-600"
                       >
                         Prev
                       </button>
@@ -1142,7 +1149,7 @@ export default function OwnerAppointments({ view = "overview" }) {
                           const next = addDays(new Date(weekStart), 7);
                           setWeekStart(next.toISOString().slice(0, 10));
                         }}
-                        className="px-2 py-1 rounded-lg border border-slate-200 text-xs text-slate-600"
+                        className="px-2 py-1 rounded-lg border border-gray-200 text-xs text-gray-600"
                       >
                         Next
                       </button>
@@ -1158,28 +1165,28 @@ export default function OwnerAppointments({ view = "overview" }) {
             {isOverview ? (
               <div className="space-y-3 lg:hidden">
               {isOverview ? (
-                <details className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
-                  <summary className="cursor-pointer text-sm font-semibold text-slate-900">Next up</summary>
+                <details className="bg-white rounded-lg border border-gray-200 shadow-sm p-4">
+                  <summary className="cursor-pointer text-sm font-semibold text-gray-900">Next up</summary>
                   {renderNextUpBody()}
                 </details>
               ) : null}
               {isOverview ? (
-                <details className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
-                  <summary className="cursor-pointer text-sm font-semibold text-slate-900">Day view</summary>
+                <details className="bg-white rounded-lg border border-gray-200 shadow-sm p-4">
+                  <summary className="cursor-pointer text-sm font-semibold text-gray-900">Day view</summary>
                   <div className="mt-2">
                     <input
                       type="date"
                       value={calendarDate}
                       onChange={(event) => setCalendarDate(event.target.value)}
-                      className="px-3 py-2 rounded-lg border border-slate-200 text-sm"
+                      className="px-3 py-2 rounded-lg border border-gray-200 text-sm"
                     />
                   </div>
                   {renderDayViewBody()}
                 </details>
               ) : null}
               {isScheduleView ? (
-                <details className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4" open>
-                  <summary className="cursor-pointer text-sm font-semibold text-slate-900">Schedule settings</summary>
+                <details className="bg-white rounded-lg border border-gray-200 shadow-sm p-4" open>
+                  <summary className="cursor-pointer text-sm font-semibold text-gray-900">Schedule settings</summary>
                   <div className="mt-3">
                     <button
                       type="button"
@@ -1194,7 +1201,7 @@ export default function OwnerAppointments({ view = "overview" }) {
                   <div className="mt-3 grid gap-3">
                     <div className="grid grid-cols-2 gap-2">
                       <div>
-                        <label className="block text-[11px] text-slate-500 mb-1">Slot (minutes)</label>
+                        <label className="block text-[11px] text-gray-500 mb-1">Slot (minutes)</label>
                         <input
                           type="number"
                           min="5"
@@ -1202,11 +1209,11 @@ export default function OwnerAppointments({ view = "overview" }) {
                           onChange={(event) =>
                             setSettingsDraft((prev) => ({ ...prev, slot_minutes: Number(event.target.value) }))
                           }
-                          className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm"
+                          className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm"
                         />
                       </div>
                       <div>
-                        <label className="block text-[11px] text-slate-500 mb-1">Buffer (minutes)</label>
+                        <label className="block text-[11px] text-gray-500 mb-1">Buffer (minutes)</label>
                         <input
                           type="number"
                           min="0"
@@ -1214,13 +1221,13 @@ export default function OwnerAppointments({ view = "overview" }) {
                           onChange={(event) =>
                             setSettingsDraft((prev) => ({ ...prev, buffer_minutes: Number(event.target.value) }))
                           }
-                          className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm"
+                          className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm"
                         />
                       </div>
                     </div>
                     <div className="grid grid-cols-2 gap-2">
                       <div>
-                        <label className="block text-[11px] text-slate-500 mb-1">No-show after (minutes)</label>
+                        <label className="block text-[11px] text-gray-500 mb-1">No-show after (minutes)</label>
                         <input
                           type="number"
                           min="5"
@@ -1228,15 +1235,15 @@ export default function OwnerAppointments({ view = "overview" }) {
                           onChange={(event) =>
                             setSettingsDraft((prev) => ({ ...prev, no_show_minutes: Number(event.target.value) }))
                           }
-                          className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm"
+                          className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm"
                         />
                       </div>
                       <div>
-                        <label className="block text-[11px] text-slate-500 mb-1">Reminder language</label>
+                        <label className="block text-[11px] text-gray-500 mb-1">Reminder language</label>
                         <select
                           value={settingsDraft.locale}
                           onChange={(event) => setSettingsDraft((prev) => ({ ...prev, locale: event.target.value }))}
-                          className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm bg-white"
+                          className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white"
                         >
                           <option value="en">English</option>
                           <option value="ar">Arabic</option>
@@ -1245,11 +1252,11 @@ export default function OwnerAppointments({ view = "overview" }) {
                       </div>
                     </div>
                     <div>
-                      <label className="block text-[11px] text-slate-500 mb-1">Timezone</label>
+                      <label className="block text-[11px] text-gray-500 mb-1">Timezone</label>
                       <input
                         value={settingsDraft.timezone}
                         onChange={(event) => setSettingsDraft((prev) => ({ ...prev, timezone: event.target.value }))}
-                        className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm"
+                        className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm"
                       />
                     </div>
                     <div className="space-y-2">
@@ -1260,7 +1267,7 @@ export default function OwnerAppointments({ view = "overview" }) {
                         const end = enabled ? slots[0].end : "18:00";
                         return (
                           <div key={day.key} className="grid grid-cols-[auto_1fr_1fr] items-center gap-2">
-                            <label className="text-xs text-slate-600 flex items-center gap-2">
+                            <label className="text-xs text-gray-600 flex items-center gap-2">
                               <input
                                 type="checkbox"
                                 checked={enabled}
@@ -1281,7 +1288,7 @@ export default function OwnerAppointments({ view = "overview" }) {
                                 next[day.key] = [{ start: event.target.value, end }];
                                 setSettingsDraft((prev) => ({ ...prev, weekly_hours: next }));
                               }}
-                              className="px-2 py-1 rounded-lg border border-slate-200 text-xs"
+                              className="px-2 py-1 rounded-lg border border-gray-200 text-xs"
                             />
                             <input
                               type="time"
@@ -1292,7 +1299,7 @@ export default function OwnerAppointments({ view = "overview" }) {
                                 next[day.key] = [{ start, end: event.target.value }];
                                 setSettingsDraft((prev) => ({ ...prev, weekly_hours: next }));
                               }}
-                              className="px-2 py-1 rounded-lg border border-slate-200 text-xs"
+                              className="px-2 py-1 rounded-lg border border-gray-200 text-xs"
                             />
                           </div>
                         );
@@ -1302,8 +1309,8 @@ export default function OwnerAppointments({ view = "overview" }) {
                 </details>
               ) : null}
               {isWeekView ? (
-                <details className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4" open>
-                  <summary className="cursor-pointer text-sm font-semibold text-slate-900">Week view</summary>
+                <details className="bg-white rounded-lg border border-gray-200 shadow-sm p-4" open>
+                  <summary className="cursor-pointer text-sm font-semibold text-gray-900">Week view</summary>
                   <div className="mt-3 flex items-center gap-2">
                     <button
                       type="button"
@@ -1311,7 +1318,7 @@ export default function OwnerAppointments({ view = "overview" }) {
                         const next = addDays(new Date(weekStart), -7);
                         setWeekStart(next.toISOString().slice(0, 10));
                       }}
-                      className="px-2 py-1 rounded-lg border border-slate-200 text-xs text-slate-600"
+                      className="px-2 py-1 rounded-lg border border-gray-200 text-xs text-gray-600"
                     >
                       Prev
                     </button>
@@ -1321,7 +1328,7 @@ export default function OwnerAppointments({ view = "overview" }) {
                         const next = addDays(new Date(weekStart), 7);
                         setWeekStart(next.toISOString().slice(0, 10));
                       }}
-                      className="px-2 py-1 rounded-lg border border-slate-200 text-xs text-slate-600"
+                      className="px-2 py-1 rounded-lg border border-gray-200 text-xs text-gray-600"
                     >
                       Next
                     </button>
@@ -1334,13 +1341,13 @@ export default function OwnerAppointments({ view = "overview" }) {
             {isOverview ? (
               <aside className="hidden lg:block space-y-4 lg:sticky lg:top-6 lg:self-start">
               {isOverview ? (
-                <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+                <section className="bg-white rounded-lg border border-gray-200 shadow-sm p-5">
                   <div className="flex items-center justify-between">
-                    <h3 className="text-base font-semibold text-slate-900">Next up</h3>
+                    <h3 className="text-base font-semibold text-gray-900">Next up</h3>
                     <button
                       type="button"
                       onClick={loadNextUp}
-                      className="text-xs text-slate-500 hover:text-slate-700"
+                      className="text-xs text-blue-600 hover:text-blue-700"
                     >
                       Refresh
                     </button>
@@ -1350,14 +1357,14 @@ export default function OwnerAppointments({ view = "overview" }) {
               ) : null}
 
               {isOverview ? (
-                <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+                <section className="bg-white rounded-lg border border-gray-200 shadow-sm p-5">
                   <div className="flex items-center justify-between gap-2">
-                    <h3 className="text-base font-semibold text-slate-900">Day view</h3>
+                    <h3 className="text-base font-semibold text-gray-900">Day view</h3>
                     <input
                       type="date"
                       value={calendarDate}
                       onChange={(event) => setCalendarDate(event.target.value)}
-                      className="px-3 py-2 rounded-lg border border-slate-200 text-sm"
+                      className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs"
                     />
                   </div>
                   {renderDayViewBody()}
@@ -1365,9 +1372,9 @@ export default function OwnerAppointments({ view = "overview" }) {
               ) : null}
 
               {isScheduleView ? (
-                <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+                <section className="bg-white rounded-lg border border-gray-200 shadow-sm p-5">
                   <div className="flex items-center justify-between gap-2">
-                    <h3 className="text-base font-semibold text-slate-900">Schedule settings</h3>
+                    <h3 className="text-base font-semibold text-gray-900">Schedule settings</h3>
                     <button
                       type="button"
                       onClick={saveSettings}
@@ -1381,7 +1388,7 @@ export default function OwnerAppointments({ view = "overview" }) {
                   <div className="mt-3 grid gap-3">
                     <div className="grid grid-cols-2 gap-2">
                       <div>
-                        <label className="block text-[11px] text-slate-500 mb-1">Slot (minutes)</label>
+                        <label className="block text-[11px] text-gray-500 mb-1">Slot (minutes)</label>
                         <input
                           type="number"
                           min="5"
@@ -1389,11 +1396,11 @@ export default function OwnerAppointments({ view = "overview" }) {
                           onChange={(event) =>
                             setSettingsDraft((prev) => ({ ...prev, slot_minutes: Number(event.target.value) }))
                           }
-                          className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm"
+                          className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm"
                         />
                       </div>
                       <div>
-                        <label className="block text-[11px] text-slate-500 mb-1">Buffer (minutes)</label>
+                        <label className="block text-[11px] text-gray-500 mb-1">Buffer (minutes)</label>
                         <input
                           type="number"
                           min="0"
@@ -1401,13 +1408,13 @@ export default function OwnerAppointments({ view = "overview" }) {
                           onChange={(event) =>
                             setSettingsDraft((prev) => ({ ...prev, buffer_minutes: Number(event.target.value) }))
                           }
-                          className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm"
+                          className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm"
                         />
                       </div>
                     </div>
                     <div className="grid grid-cols-2 gap-2">
                       <div>
-                        <label className="block text-[11px] text-slate-500 mb-1">No-show after (minutes)</label>
+                        <label className="block text-[11px] text-gray-500 mb-1">No-show after (minutes)</label>
                         <input
                           type="number"
                           min="5"
@@ -1415,15 +1422,15 @@ export default function OwnerAppointments({ view = "overview" }) {
                           onChange={(event) =>
                             setSettingsDraft((prev) => ({ ...prev, no_show_minutes: Number(event.target.value) }))
                           }
-                          className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm"
+                          className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm"
                         />
                       </div>
                       <div>
-                        <label className="block text-[11px] text-slate-500 mb-1">Reminder language</label>
+                        <label className="block text-[11px] text-gray-500 mb-1">Reminder language</label>
                         <select
                           value={settingsDraft.locale}
                           onChange={(event) => setSettingsDraft((prev) => ({ ...prev, locale: event.target.value }))}
-                          className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm bg-white"
+                          className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white"
                         >
                           <option value="en">English</option>
                           <option value="ar">Arabic</option>
@@ -1432,11 +1439,11 @@ export default function OwnerAppointments({ view = "overview" }) {
                       </div>
                     </div>
                     <div>
-                      <label className="block text-[11px] text-slate-500 mb-1">Timezone</label>
+                      <label className="block text-[11px] text-gray-500 mb-1">Timezone</label>
                       <input
                         value={settingsDraft.timezone}
                         onChange={(event) => setSettingsDraft((prev) => ({ ...prev, timezone: event.target.value }))}
-                        className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm"
+                        className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm"
                       />
                     </div>
                     <div className="space-y-2">
@@ -1447,7 +1454,7 @@ export default function OwnerAppointments({ view = "overview" }) {
                         const end = enabled ? slots[0].end : "18:00";
                         return (
                           <div key={day.key} className="grid grid-cols-[auto_1fr_1fr] items-center gap-2">
-                            <label className="text-xs text-slate-600 flex items-center gap-2">
+                            <label className="text-xs text-gray-600 flex items-center gap-2">
                               <input
                                 type="checkbox"
                                 checked={enabled}
@@ -1468,7 +1475,7 @@ export default function OwnerAppointments({ view = "overview" }) {
                                 next[day.key] = [{ start: event.target.value, end }];
                                 setSettingsDraft((prev) => ({ ...prev, weekly_hours: next }));
                               }}
-                              className="px-2 py-1 rounded-lg border border-slate-200 text-xs"
+                              className="px-2 py-1 rounded-lg border border-gray-200 text-xs"
                             />
                             <input
                               type="time"
@@ -1479,20 +1486,20 @@ export default function OwnerAppointments({ view = "overview" }) {
                                 next[day.key] = [{ start, end: event.target.value }];
                                 setSettingsDraft((prev) => ({ ...prev, weekly_hours: next }));
                               }}
-                              className="px-2 py-1 rounded-lg border border-slate-200 text-xs"
+                              className="px-2 py-1 rounded-lg border border-gray-200 text-xs"
                             />
                           </div>
                         );
                       })}
                     </div>
                   </div>
-                  {!settings ? <div className="text-xs text-slate-500 mt-2">Using default hours until saved.</div> : null}
+                  {!settings ? <div className="text-xs text-gray-500 mt-2">Using default hours until saved.</div> : null}
                 </section>
               ) : null}
               {isWeekView ? (
-                <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+                <section className="bg-white rounded-lg border border-gray-200 shadow-sm p-5">
                   <div className="flex items-center justify-between gap-2">
-                    <h3 className="text-base font-semibold text-slate-900">Week view</h3>
+                    <h3 className="text-base font-semibold text-gray-900">Week view</h3>
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
@@ -1500,7 +1507,7 @@ export default function OwnerAppointments({ view = "overview" }) {
                           const next = addDays(new Date(weekStart), -7);
                           setWeekStart(next.toISOString().slice(0, 10));
                         }}
-                        className="px-2 py-1 rounded-lg border border-slate-200 text-xs text-slate-600"
+                        className="px-2 py-1 rounded-lg border border-gray-200 text-xs text-gray-600"
                       >
                         Prev
                       </button>
@@ -1510,7 +1517,7 @@ export default function OwnerAppointments({ view = "overview" }) {
                           const next = addDays(new Date(weekStart), 7);
                           setWeekStart(next.toISOString().slice(0, 10));
                         }}
-                        className="px-2 py-1 rounded-lg border border-slate-200 text-xs text-slate-600"
+                        className="px-2 py-1 rounded-lg border border-gray-200 text-xs text-gray-600"
                       >
                         Next
                       </button>

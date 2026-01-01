@@ -52,6 +52,7 @@ async def _call_model(model: str, *, tool_context: dict, user_message: str, max_
         "You are a careful pharmacist assistant (not a doctor).\n"
         "You MUST answer using ONLY the TOOL_CONTEXT.\n"
         "Return STRICT JSON only. No prose. No markdown.\n"
+        "Do NOT mention exact stock counts. Say available/out of stock and point to the card for details if needed.\n"
         "If TOOL_CONTEXT has no relevant info, answer: \"I don’t know based on available pharmacy data.\".\n"
         "Output schema:\n"
         "{\n"
@@ -87,11 +88,29 @@ async def generate_answer(
     main_model = (os.getenv("OPENROUTER_MAIN_MODEL") or "").strip() or (os.getenv("OPENROUTER_CHAT_MODEL") or "").strip()
     fallback_model = (os.getenv("OPENROUTER_FALLBACK_MODEL") or "").strip() or (os.getenv("OPENROUTER_CHAT_MODEL") or "").strip()
 
+    items = tool_context.items or []
+    if tool_context.intent in {"MEDICINE_SEARCH", "PRODUCT_SEARCH"} and items:
+        redacted = []
+        for item in items:
+            if not isinstance(item, dict):
+                redacted.append(item)
+                continue
+            stock = int(item.get("stock") or 0) if item.get("stock") is not None else None
+            availability = None
+            if stock is not None:
+                availability = "available" if stock > 0 else "out of stock"
+            next_item = dict(item)
+            next_item.pop("stock", None)
+            if availability:
+                next_item["availability"] = availability
+            redacted.append(next_item)
+        items = redacted
+
     ctx_dict = {
         "intent": tool_context.intent,
         "language": tool_context.language,
         "found": tool_context.found,
-        "items": tool_context.items or [],
+        "items": items,
         "suggestions": tool_context.suggestions or [],
         "citations": tool_context.citations or [],
         "snippets": getattr(tool_context, "snippets", None) or [],

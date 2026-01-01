@@ -9,8 +9,9 @@ from app import models
 from app.auth.deps import require_admin, require_owner
 from app.ai.intent import get_customer_chat_id, route_intent
 from app.ai import session_memory
+from app.chat_sessions import ESCALATION_SYSTEM_MESSAGE, add_message, get_or_create_session
 from app.ai import rag_service
-from app.ai.safety import detect_risk, safe_response
+from app.ai.safety import detect_risk
 from app.deps import get_active_public_pharmacy
 from .. import crud, schemas
 from ..db import get_db
@@ -195,15 +196,18 @@ async def chat_for_pharmacy(
     message = (payload.message or "").strip()
     if not message:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Message is required")
-    session_id = (payload.session_id or "").strip() or session_memory.new_session_id()
+    requested_session_id = (payload.session_id or "").strip() or None
 
     customer_id = get_customer_chat_id(chat_id)
+    session = get_or_create_session(db, pharmacy_id, customer_id, requested_session_id)
+    session_id = session.session_id
+    system_message: str | None = None
+    add_message(db, session, "USER", message)
     rag_service.ensure_pharmacy_playbook(db, pharmacy_id)
     db.commit()
     is_risky, reason = detect_risk(message)
     if is_risky:
-        pharmacy = db.query(models.Pharmacy).filter(models.Pharmacy.id == pharmacy_id).first()
-        answer = safe_response(pharmacy, reason)
+        answer = "A pharmacist will reply shortly. If this is urgent, please seek medical care."
         interaction = models.AIInteraction(
             customer_id=customer_id,
             customer_query=message,
@@ -216,6 +220,10 @@ async def chat_for_pharmacy(
         db.add(interaction)
         db.commit()
         db.refresh(interaction)
+        session.status = "ESCALATED"
+        system_message = ESCALATION_SYSTEM_MESSAGE
+        add_message(db, session, "SYSTEM", system_message, {"kind": "escalation", "reason": reason})
+        add_message(db, session, "AI", interaction.ai_response, {"intent": "MEDICAL_ADVICE_RISK"})
         session_memory.append_turns(db, pharmacy_id, session_id, message, interaction.ai_response)
         return schemas.AIChatOut(
             interaction_id=interaction.id,
@@ -229,6 +237,7 @@ async def chat_for_pharmacy(
             created_at=interaction.created_at,
             data_last_updated_at=None,
             indexed_at=None,
+            system_message=system_message,
         )
     turns = session_memory.load_turns(db, pharmacy_id, session_id)
     memory_context = session_memory.user_context(turns)
@@ -240,18 +249,28 @@ async def chat_for_pharmacy(
         memory_context=memory_context,
     )
 
+    escalated = bool(intent_result.escalated) or intent_result.intent in {"MEDICAL_ADVICE_RISK", "RISKY_MEDICAL"}
+    answer = intent_result.answer
+    if escalated:
+        answer = "A pharmacist will reply shortly. If this is urgent, please seek medical care."
+
     interaction = models.AIInteraction(
         customer_id=customer_id,
         customer_query=message,
-        ai_response=intent_result.answer,
+        ai_response=answer,
         confidence_score=float(intent_result.confidence),
-        escalated_to_human=bool(intent_result.escalated),
+        escalated_to_human=escalated,
         created_at=datetime.utcnow(),
         pharmacy_id=pharmacy_id,
     )
     db.add(interaction)
     db.commit()
     db.refresh(interaction)
+    if interaction.escalated_to_human:
+        session.status = "ESCALATED"
+        system_message = ESCALATION_SYSTEM_MESSAGE
+        add_message(db, session, "SYSTEM", system_message, {"kind": "escalation"})
+    add_message(db, session, "AI", interaction.ai_response, {"intent": intent_result.intent})
     session_memory.append_turns(db, pharmacy_id, session_id, message, interaction.ai_response)
 
     return schemas.AIChatOut(
@@ -266,4 +285,5 @@ async def chat_for_pharmacy(
         created_at=interaction.created_at,
         data_last_updated_at=intent_result.data_last_updated_at,
         indexed_at=intent_result.indexed_at,
+        system_message=system_message,
     )

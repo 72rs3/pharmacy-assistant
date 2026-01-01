@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app import models
 
 
-_TTL_MINUTES = 30
+_TTL_MINUTES = int(os.getenv("CHAT_SESSION_TIMEOUT_MINUTES", "10"))
 _STATE_KEY_PREFIX = "state:"
 
 
@@ -59,8 +59,9 @@ def load_turns(db: Session, pharmacy_id: int, session_id: str) -> list[dict[str,
     )
     if not row:
         return []
-    if row.expires_at and row.expires_at < datetime.utcnow():
-        db.delete(row)
+    now = datetime.utcnow()
+    if row.last_activity_at and row.last_activity_at < now - timedelta(minutes=_TTL_MINUTES):
+        row.status = "CLOSED"
         db.commit()
         return []
     try:
@@ -84,7 +85,8 @@ def save_turns(db: Session, pharmacy_id: int, session_id: str, turns: list[dict[
         except Exception:
             pass
 
-    expires_at = datetime.utcnow() + timedelta(minutes=_TTL_MINUTES)
+    now = datetime.utcnow()
+    expires_at = now + timedelta(minutes=_TTL_MINUTES)
     row = (
         db.query(models.ChatSession)
         .filter(
@@ -96,12 +98,15 @@ def save_turns(db: Session, pharmacy_id: int, session_id: str, turns: list[dict[
     if row:
         row.turns_json = payload
         row.expires_at = expires_at
+        row.last_activity_at = now
     else:
         row = models.ChatSession(
             pharmacy_id=pharmacy_id,
             session_id=session_id,
+            user_session_id="",
             turns_json=payload,
             expires_at=expires_at,
+            last_activity_at=now,
         )
         db.add(row)
     db.commit()

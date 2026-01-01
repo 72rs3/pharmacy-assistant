@@ -1,4 +1,5 @@
 from sqlalchemy import Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from datetime import datetime
 
@@ -42,6 +43,7 @@ class Pharmacy(Base):
     appointments = relationship("Appointment", back_populates="pharmacy")
     ai_interactions = relationship("AIInteraction", back_populates="pharmacy")
     ai_logs = relationship("AILog", back_populates="pharmacy")
+    chat_sessions = relationship("ChatSession", back_populates="pharmacy")
 
 
 class User(Base):
@@ -305,9 +307,28 @@ class ChatSession(Base):
     id = Column(Integer, primary_key=True, index=True)
     pharmacy_id = Column(Integer, ForeignKey("pharmacies.id"), nullable=False, index=True)
     session_id = Column(String, nullable=False, index=True)
+    user_session_id = Column(String, nullable=False, index=True)
+    status = Column(String, nullable=False, default="ACTIVE")
+    last_activity_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     turns_json = Column(Text, nullable=False, default="[]")
     expires_at = Column(DateTime, nullable=False, index=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    pharmacy = relationship("Pharmacy", back_populates="chat_sessions")
+    messages = relationship("ChatMessage", back_populates="session", cascade="all, delete-orphan")
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(Integer, ForeignKey("chat_sessions.id"), nullable=False, index=True)
+    sender_type = Column(String, nullable=False)
+    text = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    meta = Column("metadata", JSONB, nullable=True)
+
+    session = relationship("ChatSession", back_populates="messages")
 
 
 class Document(Base):

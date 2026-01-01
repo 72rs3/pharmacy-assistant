@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # --------------------
@@ -576,7 +576,33 @@ class AIChatOut(BaseModel):
     created_at: datetime
     data_last_updated_at: datetime | None = None
     indexed_at: datetime | None = None
+    system_message: str | None = None
 
 
 class AIEscalationReplyIn(BaseModel):
     reply: str
+
+
+class ChatMessageOut(BaseModel):
+    id: int
+    session_id: int
+    sender_type: str
+    text: str
+    created_at: datetime
+    meta: dict | None = Field(default=None, serialization_alias="metadata")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ChatSessionSummary(BaseModel):
+    id: int
+    session_id: str
+    user_session_id: str
+    status: str
+    last_activity_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ChatSessionReplyIn(BaseModel):
+    text: str

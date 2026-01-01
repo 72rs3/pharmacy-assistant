@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import api from "../api/axios";
 import { RefreshCw } from "lucide-react";
+import api from "../api/axios";
 
 const formatDate = (value) => {
   if (!value) return "";
@@ -9,53 +9,93 @@ const formatDate = (value) => {
   return date.toLocaleString();
 };
 
-export default function OwnerEscalations() {
-  const [items, setItems] = useState([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [replyById, setReplyById] = useState({});
-  const [actionError, setActionError] = useState("");
-  const [isSendingId, setIsSendingId] = useState(null);
+const formatTime = (value) => {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+};
 
-  const loadEscalations = async () => {
-    setIsLoading(true);
+const senderLabel = (senderType) => {
+  if (senderType === "USER") return "Customer";
+  if (senderType === "PHARMACIST") return "You";
+  if (senderType === "SYSTEM") return "System";
+  return "AI Assistant";
+};
+
+export default function OwnerEscalations() {
+  const [sessions, setSessions] = useState([]);
+  const [selectedSessionId, setSelectedSessionId] = useState("");
+  const [messages, setMessages] = useState([]);
+  const [replyText, setReplyText] = useState("");
+  const [isLoadingSessions, setIsLoadingSessions] = useState(false);
+  const [isLoadingMessages, setIsLoadingMessages] = useState(false);
+  const [isSending, setIsSending] = useState(false);
+  const [error, setError] = useState("");
+  const [actionError, setActionError] = useState("");
+
+  const loadSessions = async () => {
+    setIsLoadingSessions(true);
     setError("");
     try {
-      const res = await api.get("/ai/escalations/owner");
-      setItems(res.data ?? []);
+      const res = await api.get("/admin/pharmacist/sessions", {
+        params: { status_filter: "ESCALATED" },
+      });
+      const items = res.data ?? [];
+      setSessions(items);
+      if (!selectedSessionId && items.length) {
+        setSelectedSessionId(items[0].session_id);
+      }
     } catch (err) {
-      setItems([]);
+      setSessions([]);
       setError(err?.response?.data?.detail ?? "Failed to load escalations");
     } finally {
-      setIsLoading(false);
+      setIsLoadingSessions(false);
+    }
+  };
+
+  const loadMessages = async (sessionId) => {
+    if (!sessionId) return;
+    setIsLoadingMessages(true);
+    setActionError("");
+    try {
+      const res = await api.get(`/admin/pharmacist/sessions/${sessionId}/messages`);
+      setMessages(res.data ?? []);
+    } catch (err) {
+      setMessages([]);
+      setActionError(err?.response?.data?.detail ?? "Failed to load chat history");
+    } finally {
+      setIsLoadingMessages(false);
     }
   };
 
   useEffect(() => {
-    loadEscalations();
+    loadSessions();
   }, []);
 
-  const sendReply = async (interactionId) => {
-    setActionError("");
-    const reply = (replyById[interactionId] ?? "").trim();
-    if (!reply) {
+  useEffect(() => {
+    if (!selectedSessionId) return;
+    loadMessages(selectedSessionId);
+  }, [selectedSessionId]);
+
+  const sendReply = async () => {
+    if (!selectedSessionId) return;
+    const trimmed = replyText.trim();
+    if (!trimmed) {
       setActionError("Write a reply first.");
       return;
     }
-
-    setIsSendingId(interactionId);
+    setIsSending(true);
+    setActionError("");
     try {
-      await api.post(`/ai/escalations/${interactionId}/reply`, { reply });
-      setItems((prev) => prev.filter((item) => item.id !== interactionId));
-      setReplyById((prev) => {
-        const next = { ...prev };
-        delete next[interactionId];
-        return next;
-      });
+      await api.post(`/admin/pharmacist/sessions/${selectedSessionId}/reply`, { text: trimmed });
+      setReplyText("");
+      await loadMessages(selectedSessionId);
+      await loadSessions();
     } catch (err) {
       setActionError(err?.response?.data?.detail ?? "Failed to send reply");
     } finally {
-      setIsSendingId(null);
+      setIsSending(false);
     }
   };
 
@@ -64,99 +104,134 @@ export default function OwnerEscalations() {
       <div className="bg-white rounded-2xl shadow-[0_24px_60px_rgba(15,23,42,0.12)] border border-slate-200 overflow-hidden">
         <div className="px-6 py-5 flex items-center justify-between gap-4 border-b border-slate-200">
           <div className="min-w-0">
-            <h1 className="text-3xl font-semibold text-slate-900 tracking-tight">AI Escalations</h1>
-            <p className="text-sm text-slate-500 mt-1">Reply to customers when the AI escalates medical-risk questions.</p>
+            <h1 className="text-3xl font-semibold text-slate-900 tracking-tight">Pharmacist Escalations</h1>
+            <p className="text-sm text-slate-500 mt-1">Review escalated AI chats and respond in the same thread.</p>
           </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-              onClick={loadEscalations}
-              disabled={isLoading}
-              title="Refresh"
-            >
-              <RefreshCw className="w-4 h-4" />
-              Refresh
-            </button>
-          </div>
+          <button
+            type="button"
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+            onClick={loadSessions}
+            disabled={isLoadingSessions}
+            title="Refresh"
+          >
+            <RefreshCw className="w-4 h-4" />
+            Refresh
+          </button>
         </div>
 
-        <div className="p-6 bg-slate-50/60 space-y-4">
-          {error ? (
-            <div className="rounded-xl border border-red-200 bg-red-50 text-red-800 px-4 py-3 text-sm" role="alert">
-              {error}
-            </div>
-          ) : null}
-          {actionError ? (
-            <div className="rounded-xl border border-red-200 bg-red-50 text-red-800 px-4 py-3 text-sm" role="alert">
-              {actionError}
-            </div>
-          ) : null}
+        <div className="grid lg:grid-cols-[320px_1fr] min-h-[520px]">
+          <aside className="border-b lg:border-b-0 lg:border-r border-slate-200 bg-slate-50/60">
+            {error ? (
+              <div className="rounded-xl border border-red-200 bg-red-50 text-red-800 px-4 py-3 text-sm m-4" role="alert">
+                {error}
+              </div>
+            ) : null}
+            {sessions.length === 0 && !isLoadingSessions ? (
+              <div className="p-6 text-sm text-slate-600">No escalations pending.</div>
+            ) : (
+              <div className="divide-y divide-slate-200">
+                {sessions.map((session) => (
+                  <button
+                    key={session.id}
+                    type="button"
+                    onClick={() => setSelectedSessionId(session.session_id)}
+                    className={`w-full text-left px-4 py-4 transition-colors ${
+                      selectedSessionId === session.session_id ? "bg-white" : "hover:bg-white/80"
+                    }`}
+                  >
+                    <div className="text-sm font-semibold text-slate-900">Session {session.session_id.slice(0, 8)}</div>
+                    <div className="text-xs text-slate-500 mt-1">Customer ID: {session.user_session_id}</div>
+                    <div className="text-[11px] text-slate-400 mt-1">Last active {formatDate(session.last_activity_at)}</div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </aside>
 
-          {items.length === 0 && !isLoading ? (
-            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-8 text-slate-600 text-sm">
-              No escalations pending.
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {items.map((item) => (
-                <section key={item.id} className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-                  <div className="px-6 py-5 border-b border-slate-200 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-                    <div className="min-w-0">
-                      <h2 className="text-xl font-semibold text-slate-900">Escalation #{item.id}</h2>
-                      <p className="text-sm text-slate-500 mt-1">Received {formatDate(item.created_at)}</p>
-                    </div>
-                    <span className="inline-flex items-center px-3 py-1.5 rounded-full border border-slate-200 bg-slate-50 text-xs text-slate-700">
-                      Chat: {item.customer_id ?? "—"}
-                    </span>
-                  </div>
+          <section className="flex flex-col">
+            <div className="flex-1 p-6 space-y-4 bg-white">
+              {actionError ? (
+                <div className="rounded-xl border border-red-200 bg-red-50 text-red-800 px-4 py-3 text-sm" role="alert">
+                  {actionError}
+                </div>
+              ) : null}
 
-                  <div className="px-6 py-5 space-y-4">
-                    <div className="grid gap-4 lg:grid-cols-2">
-                      <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                        <p className="text-xs font-semibold text-slate-700">Customer</p>
-                        <p className="text-sm text-slate-700 mt-2 whitespace-pre-wrap">{item.customer_query ?? ""}</p>
+              {!selectedSessionId ? (
+                <div className="text-sm text-slate-500">Select a session to review the conversation.</div>
+              ) : isLoadingMessages ? (
+                <div className="text-sm text-slate-500">Loading messages...</div>
+              ) : messages.length === 0 ? (
+                <div className="text-sm text-slate-500">No messages yet.</div>
+              ) : (
+                <div className="space-y-4">
+                  {messages.map((message) => {
+                    const sender = message.sender_type ?? "SYSTEM";
+                    const label = senderLabel(sender);
+                    const timeLabel = formatTime(message.created_at);
+
+                    if (sender === "SYSTEM") {
+                      return (
+                        <div key={message.id} className="flex justify-center">
+                          <div className="max-w-[80%] text-center text-xs text-slate-600 bg-slate-50 border border-slate-200 px-3 py-2 rounded-xl">
+                            <div className="text-[10px] uppercase tracking-wide text-slate-400">
+                              {label}
+                              {timeLabel ? ` - ${timeLabel}` : ""}
+                            </div>
+                            <div className="mt-1 whitespace-pre-line">{message.text}</div>
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    const isPharmacist = sender === "PHARMACIST";
+                    return (
+                      <div key={message.id} className={`flex ${isPharmacist ? "justify-end" : "justify-start"}`}>
+                        <div className={`max-w-[80%] ${isPharmacist ? "items-end" : "items-start"} flex flex-col`}>
+                          <div className="text-[11px] text-slate-500 mb-1">
+                            {label}
+                            {timeLabel ? ` - ${timeLabel}` : ""}
+                          </div>
+                          <div
+                            className={`px-4 py-3 rounded-2xl shadow-sm whitespace-pre-line ${
+                              isPharmacist
+                                ? "bg-emerald-600 text-white rounded-tr-none"
+                                : "bg-slate-100 text-slate-800 rounded-tl-none"
+                            }`}
+                          >
+                            {message.text}
+                          </div>
+                        </div>
                       </div>
-
-                      <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                        <p className="text-xs font-semibold text-slate-700">AI response</p>
-                        <p className="text-sm text-slate-700 mt-2 whitespace-pre-wrap">{item.ai_response ?? ""}</p>
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-medium text-slate-600 mb-1" htmlFor={`reply-${item.id}`}>
-                        Your reply
-                      </label>
-                      <textarea
-                        id={`reply-${item.id}`}
-                        rows={4}
-                        value={replyById[item.id] ?? ""}
-                        onChange={(e) => setReplyById((prev) => ({ ...prev, [item.id]: e.target.value }))}
-                        placeholder="Write guidance for the customer..."
-                        className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-4 focus:ring-blue-100 text-sm"
-                      />
-                      <p className="text-xs text-slate-500 mt-2">
-                        Keep it clear and actionable. If urgent or high-risk, advise the customer to seek medical help.
-                      </p>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => sendReply(item.id)}
-                        disabled={isSendingId === item.id}
-                        className="px-5 py-2.5 rounded-xl bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60"
-                      >
-                        {isSendingId === item.id ? "Sending..." : "Send reply"}
-                      </button>
-                    </div>
-                  </div>
-                </section>
-              ))}
+                    );
+                  })}
+                </div>
+              )}
             </div>
-          )}
+
+            <div className="border-t border-slate-200 bg-white p-4">
+              <div className="flex flex-col gap-3">
+                <label className="text-xs font-medium text-slate-600">Reply as pharmacist</label>
+                <textarea
+                  rows={4}
+                  value={replyText}
+                  onChange={(event) => setReplyText(event.target.value)}
+                  placeholder="Write guidance for the customer..."
+                  className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-4 focus:ring-blue-100 text-sm"
+                />
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={sendReply}
+                    disabled={!selectedSessionId || isSending}
+                    className="px-5 py-2.5 rounded-xl bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60"
+                  >
+                    {isSending ? "Sending..." : "Send reply"}
+                  </button>
+                  <span className="text-xs text-slate-500">Replies are posted in the live customer chat.</span>
+                </div>
+              </div>
+            </div>
+          </section>
         </div>
       </div>
     </div>

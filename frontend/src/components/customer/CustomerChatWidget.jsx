@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Minimize2, Pill, Send, X } from "lucide-react";
+import { Minimize2, Pill, Send, UserRound, X } from "lucide-react";
 import api from "../../api/axios";
 import { useCustomerCart } from "../../context/CustomerCartContext";
 import { useTenant } from "../../context/TenantContext";
@@ -54,7 +54,7 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
   const [messages, setMessages] = useState([
     {
       id: "welcome",
-      type: "bot",
+      senderType: "AI",
       text: `Hello! I am your ${brandName} Pharmacy AI assistant. How can I help you today?`,
       timestamp: new Date(),
       suggestions: defaultSuggestions,
@@ -99,42 +99,40 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
   }, [brandName]);
 
   useEffect(() => {
-    if (!isOpen || !chatId) return;
+    if (!isOpen || !chatId || !sessionId) return;
     let isActive = true;
 
     const loadHistory = async () => {
       try {
-        const res = await api.get("/ai/chat/my", {
+        const res = await api.get(`/chat/sessions/${sessionId}/messages`, {
           headers: { "X-Chat-ID": chatId },
         });
         if (!isActive) return;
         const items = res.data ?? [];
-        const history = items.flatMap((item) => {
-          const botText = item.ai_response ?? "";
-          return [
-            {
-              id: `user-${item.id}`,
-              type: "user",
-              text: item.customer_query,
-              timestamp: new Date(item.created_at),
-            },
-            {
-              id: `bot-${item.id}`,
-              type: "bot",
-              text: botText,
-              timestamp: new Date(item.created_at),
-              allowPrescriptionUpload: shouldOfferPrescriptionUpload(botText),
-            },
-            item.owner_reply
-              ? {
-                  id: `owner-${item.id}`,
-                  type: "bot",
-                  text: `Pharmacist reply: ${item.owner_reply}`,
-                  timestamp: new Date(item.owner_replied_at ?? item.created_at),
-                  allowPrescriptionUpload: false,
-                }
-              : null,
-          ].filter(Boolean);
+        const history = items.map((item) => {
+          const meta = item.metadata ?? {};
+          const actions = Array.isArray(meta.actions) ? meta.actions : [];
+          const cards = Array.isArray(meta.cards) ? meta.cards : [];
+          const quickReplies = Array.isArray(meta.quick_replies) ? meta.quick_replies : [];
+          const dataLastUpdatedAt = meta.data_last_updated_at ?? null;
+          const indexedAt = meta.indexed_at ?? null;
+          const intent = meta.intent ?? "";
+          const text = item.text ?? "";
+          return {
+            id: `msg-${item.id}`,
+            senderType: item.sender_type ?? "SYSTEM",
+            text,
+            timestamp: new Date(item.created_at),
+            intent,
+            actions,
+            cards,
+            quickReplies,
+            allowPrescriptionUpload: shouldOfferPrescriptionUpload(text),
+            freshness:
+              dataLastUpdatedAt || indexedAt
+                ? { dataLastUpdatedAt, indexedAt }
+                : null,
+          };
         });
         setMessages((prev) => [prev[0], ...history]);
       } catch {
@@ -146,7 +144,7 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
     return () => {
       isActive = false;
     };
-  }, [chatId, isOpen]);
+  }, [chatId, isOpen, sessionId]);
 
   const handleSend = async () => {
     const trimmed = inputValue.trim();
@@ -154,7 +152,7 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
 
     const userMessage = {
       id: `user-${Date.now()}`,
-      type: "user",
+      senderType: "USER",
       text: trimmed,
       timestamp: new Date(),
     };
@@ -192,7 +190,7 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
       const includeFreshness = intent === "MEDICINE_SEARCH" || (cards && cards.length > 0);
       const botMessage = {
         id: `bot-${res.data?.interaction_id ?? Date.now()}`,
-        type: "bot",
+        senderType: "AI",
         text: answer,
         timestamp: new Date(res.data?.created_at ?? Date.now()),
         intent,
@@ -202,14 +200,22 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
         cards,
         quickReplies: Array.isArray(res.data?.quick_replies) ? res.data.quick_replies : [],
       };
-      setMessages((prev) => [...prev, botMessage]);
+      const systemMessage = res.data?.system_message
+        ? {
+            id: `system-${Date.now()}`,
+            senderType: "SYSTEM",
+            text: res.data.system_message,
+            timestamp: new Date(),
+          }
+        : null;
+      setMessages((prev) => [...prev, ...(systemMessage ? [systemMessage] : []), botMessage]);
 
     } catch {
       setMessages((prev) => [
         ...prev,
         {
           id: `bot-error-${Date.now()}`,
-          type: "bot",
+          senderType: "SYSTEM",
           text: "Sorry, I could not reach the assistant right now. Please try again.",
           timestamp: new Date(),
           allowPrescriptionUpload: false,
@@ -241,7 +247,7 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
         ...prev.filter((m) => !m.appointmentForm),
         {
           id: `bot-appt-form-${Date.now()}`,
-          type: "bot",
+          senderType: "AI",
           text: "Please fill your details to book an appointment:",
           appointmentForm: true,
           timestamp: new Date(),
@@ -281,6 +287,17 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
       setApptSlotsError(err?.response?.data?.detail ?? "Unable to load available slots.");
     } finally {
       setIsLoadingApptSlots(false);
+    }
+  };
+
+  const resolvePharmacyId = async () => {
+    const knownId = Number(pharmacy?.id ?? 0);
+    if (knownId > 0) return knownId;
+    try {
+      const res = await api.get("/pharmacies/current");
+      return Number(res.data?.id ?? 0);
+    } catch {
+      return 0;
     }
   };
 
@@ -337,7 +354,7 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
         ...prev.filter((m) => !m.appointmentForm),
         {
           id: `bot-appt-${Date.now()}`,
-          type: "bot",
+          senderType: "AI",
           text: `Appointment request submitted (#${res.data?.id ?? "?"}). A pharmacist will confirm it. You can review it in the appointments page.`,
           timestamp: new Date(),
           allowPrescriptionUpload: false,
@@ -399,7 +416,7 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
         ...prev,
         {
           id: `bot-action-${Date.now()}`,
-          type: "bot",
+          senderType: "AI",
           text: "Please upload your prescription first.",
           timestamp: new Date(),
           allowPrescriptionUpload: true,
@@ -425,7 +442,7 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
         ...prev.filter((m) => !m.rxOrderForm),
         {
           id: `bot-action-${Date.now()}`,
-          type: "bot",
+          senderType: "AI",
           text: `Rx order placed (Order #${res.data?.order_id ?? "?"}). A pharmacist can now review and approve your prescription.`,
           timestamp: new Date(),
           allowPrescriptionUpload: false,
@@ -437,7 +454,7 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
         ...prev,
         {
           id: `bot-action-${Date.now()}`,
-          type: "bot",
+          senderType: "AI",
           text: err?.response?.data?.detail ?? "Couldn't place the Rx order. Please try again.",
           timestamp: new Date(),
           allowPrescriptionUpload: false,
@@ -480,7 +497,7 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
         ...prev,
         {
           id: `bot-prescription-${Date.now()}`,
-          type: "bot",
+          senderType: "AI",
           text:
             "Prescription received. Rx medicines are not added to cart. If you'd like, I can place the Rx order now so the pharmacist can approve it.",
           actions: rxOrderDraft.medicineId
@@ -503,6 +520,13 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
         error: err?.response?.data?.detail ?? "Upload failed.",
       }));
     }
+  };
+
+  const formatTime = (value) => {
+    if (!value) return "";
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) return "";
+    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   };
 
   if (!isOpen) return null;
@@ -537,392 +561,435 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
       </div>
 
       <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-gray-50">
-        {messages.map((message) => (
-          <div key={message.id}>
-            {message.type === "bot" ? (
-              <div className="flex items-start gap-3">
-                <div className="w-8 h-8 bg-[var(--brand-primary)] rounded-full flex items-center justify-center flex-shrink-0">
-                  <Pill className="w-4 h-4 text-white" />
+        {messages.map((message) => {
+          const senderType = message.senderType ?? "AI";
+          const isUser = senderType === "USER";
+          const isSystem = senderType === "SYSTEM";
+          const isPharmacist = senderType === "PHARMACIST";
+          const isAi = senderType === "AI";
+          const label = isUser ? "You" : isPharmacist ? "Pharmacist" : isAi ? "AI Assistant" : "System";
+          const timeLabel = formatTime(message.timestamp);
+
+          if (isSystem) {
+            return (
+              <div key={message.id} className="flex justify-center">
+                <div className="max-w-[85%] text-center text-xs text-gray-600 bg-white border border-gray-200 px-3 py-2 rounded-xl shadow-sm">
+                  <div className="text-[10px] uppercase tracking-wide text-gray-400">
+                    {label}
+                    {timeLabel ? ` - ${timeLabel}` : ""}
+                  </div>
+                  <div className="mt-1 whitespace-pre-line">{message.text}</div>
                 </div>
-                <div className="flex-1">
-                  <div className="bg-white text-gray-800 px-4 py-3 rounded-2xl rounded-tl-none shadow-sm max-w-[85%] whitespace-pre-line">
+              </div>
+            );
+          }
+
+          if (isUser) {
+            return (
+              <div key={message.id} className="flex justify-end">
+                <div className="max-w-[85%] flex flex-col items-end">
+                  <div className="text-[11px] text-gray-500 mb-1">
+                    {label}
+                    {timeLabel ? ` - ${timeLabel}` : ""}
+                  </div>
+                  <div className="bg-[var(--brand-accent)] text-white px-4 py-3 rounded-2xl rounded-tr-none shadow-sm whitespace-pre-line">
                     {message.text}
                   </div>
-                  {message.suggestions && message.suggestions.length > 0 ? (
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {message.suggestions.map((suggestion) => (
-                        <button
-                          key={suggestion}
-                          type="button"
-                          onClick={() => handleSuggestionClick(suggestion)}
-                          className="px-3 py-1.5 text-sm bg-white/80 border border-[var(--brand-primary)] text-[var(--brand-primary)] rounded-full hover:bg-[var(--brand-primary)] hover:text-white transition-colors"
-                        >
-                          {suggestion}
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
-                  {message.cards && message.cards.length > 0 ? (
-                    <div className="mt-3 space-y-2 max-w-[85%]">
-                      {message.cards.map((card) => (
-                        <div key={card.medicine_id} className="bg-white/70 border border-slate-200 rounded-xl p-3">
-                          <div className="text-sm font-semibold text-gray-900">{card.name}</div>
-                          <div className="text-xs text-gray-600 mt-1">
-                            {card.dosage ? `Dosage: ${card.dosage} - ` : ""}
-                            {card.rx ? "Rx required" : "OTC"} - Stock: {Number(card.stock ?? 0)}
-                          </div>
-                          <div className="text-xs text-gray-600 mt-1">
-                            {card.price != null ? `Price: ${Number(card.price).toFixed(2)}` : "Price: -"} -{" "}
-                            {card.updated_at ? `Updated: ${new Date(card.updated_at).toLocaleString()}` : "Updated: -"}
-                          </div>
-                          {card.indexed_at ? (
-                            <div className="text-[11px] text-gray-500 mt-1">
-                              Indexed: {new Date(card.indexed_at).toLocaleString()}
-                            </div>
-                          ) : null}
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
-                  {message.actions && message.actions.length > 0 ? (
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {message.actions.map((action, index) => (
-                        <button
-                          key={`${action.type}-${action.medicine_id ?? "x"}-${index}`}
-                          type="button"
-                          onClick={() => {
-                            if (action.type === "book_appointment") {
-                              const today = new Date().toISOString().slice(0, 10);
-                              setApptForm({
-                                customer_name: "",
-                                customer_phone: "",
-                                customer_email: "",
-                                type: "Consultation",
-                                scheduled_time: "",
-                                vaccine_name: "",
-                                notes: "",
-                              });
-                              setApptDate(today);
-                              setApptSlots([]);
-                              fetchApptSlots(today);
-                              setApptError("");
-                              setMessages((prev) => [
-                                ...prev.filter((m) => !m.appointmentForm),
-                                {
-                                  id: `bot-appt-form-${Date.now()}`,
-                                  type: "bot",
-                                  text: "Please fill your details to book an appointment:",
-                                  appointmentForm: true,
-                                  timestamp: new Date(),
-                                  allowPrescriptionUpload: false,
-                                },
-                              ]);
-                              return;
-                            }
-                            if (action.type === "open_booking") {
-                              navigate("/appointments");
-                              return;
-                            }
-                            if (action.type === "place_rx_order" && action.medicine_id) {
-                              setRxOrderDraft({ medicineId: Number(action.medicine_id), showForm: true });
-                              setRxForm({ customer_name: "", customer_phone: "", customer_address: "", customer_notes: "" });
-                              setRxFormError("");
-                              setMessages((prev) => [
-                                ...prev.filter((m) => !m.rxOrderForm),
-                                {
-                                  id: `bot-action-${Date.now()}`,
-                                  type: "bot",
-                                  text: "Please fill your details to place the Rx order:",
-                                  rxOrderForm: { medicineId: Number(action.medicine_id) },
-                                  timestamp: new Date(),
-                                  allowPrescriptionUpload: false,
-                                },
-                              ]);
-                              return;
-                            }
-                            if (action.type === "add_to_cart" && action.medicine_id) {
-                              const resolvedPharmacyId = Number(pharmacy?.id ?? 0);
-                              api
-                                .post(`/pharmacies/${resolvedPharmacyId}/cart/items`, {
-                                  medicine_id: Number(action.medicine_id),
-                                  quantity: Number(action.payload?.quantity ?? 1),
-                                })
-                                .then((res) => {
-                                  const item = res.data ?? {};
-                                  addItem({
-                                    item_type: "medicine",
-                                    item_id: item.medicine_id,
-                                    name: item.name,
-                                    price: item.price,
-                                  });
-                                  setMessages((prev) => [
-                                    ...prev,
-                                    {
-                                      id: `bot-action-${Date.now()}`,
-                                      type: "bot",
-                                      text: "Added. Do you want another medicine or any other service?",
-                                      timestamp: new Date(),
-                                      allowPrescriptionUpload: false,
-                                      quickReplies: ["Search another medicine", "Shop OTC products", "Book appointment", "Contact pharmacy"],
-                                    },
-                                  ]);
-                                })
-                                .catch(() => {
-                                  setMessages((prev) => [
-                                    ...prev,
-                                    {
-                                      id: `bot-action-${Date.now()}`,
-                                      type: "bot",
-                                      text: "I couldn't add that to the cart. Please try again.",
-                                      timestamp: new Date(),
-                                      allowPrescriptionUpload: false,
-                                    },
-                                  ]);
-                                });
-                              return;
-                            }
-                            if (action.type === "upload_prescription") {
-                              setRxOrderDraft({ medicineId: Number(action.medicine_id ?? 0) || null });
+                </div>
+              </div>
+            );
+          }
+
+          const AvatarIcon = isPharmacist ? UserRound : Pill;
+          const avatarClass = isPharmacist ? "bg-emerald-500" : "bg-[var(--brand-primary)]";
+
+          return (
+            <div key={message.id} className="flex items-start gap-3">
+              <div className={`w-8 h-8 ${avatarClass} rounded-full flex items-center justify-center flex-shrink-0`}>
+                <AvatarIcon className="w-4 h-4 text-white" />
+              </div>
+              <div className="flex-1">
+                <div className="text-[11px] text-gray-500 mb-1">
+                  {label}
+                  {timeLabel ? ` - ${timeLabel}` : ""}
+                </div>
+                <div className="bg-white text-gray-800 px-4 py-3 rounded-2xl rounded-tl-none shadow-sm max-w-[85%] whitespace-pre-line">
+                  {message.text}
+                </div>
+                {isAi && message.suggestions && message.suggestions.length > 0 ? (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {message.suggestions.map((suggestion) => (
+                      <button
+                        key={suggestion}
+                        type="button"
+                        onClick={() => handleSuggestionClick(suggestion)}
+                        className="px-3 py-1.5 text-sm bg-white/80 border border-[var(--brand-primary)] text-[var(--brand-primary)] rounded-full hover:bg-[var(--brand-primary)] hover:text-white transition-colors"
+                      >
+                        {suggestion}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+                {isAi && message.actions && message.actions.length > 0 ? (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {message.actions.map((action, index) => (
+                      <button
+                        key={`${action.type}-${action.medicine_id ?? "x"}-${index}`}
+                        type="button"
+                        onClick={async () => {
+                          if (action.type === "book_appointment") {
+                            const today = new Date().toISOString().slice(0, 10);
+                            setApptForm({
+                              customer_name: "",
+                              customer_phone: "",
+                              customer_email: "",
+                              type: "Consultation",
+                              scheduled_time: "",
+                              vaccine_name: "",
+                              notes: "",
+                            });
+                            setApptDate(today);
+                            setApptSlots([]);
+                            fetchApptSlots(today);
+                            setApptError("");
+                            setMessages((prev) => [
+                              ...prev.filter((m) => !m.appointmentForm),
+                              {
+                                id: `bot-appt-form-${Date.now()}`,
+                                senderType: "AI",
+                                text: "Please fill your details to book an appointment:",
+                                appointmentForm: true,
+                                timestamp: new Date(),
+                                allowPrescriptionUpload: false,
+                              },
+                            ]);
+                            return;
+                          }
+                          if (action.type === "open_booking") {
+                            navigate("/appointments");
+                            return;
+                          }
+                          if (action.type === "place_rx_order" && action.medicine_id) {
+                            setRxOrderDraft({ medicineId: Number(action.medicine_id), showForm: true });
+                            setRxForm({ customer_name: "", customer_phone: "", customer_address: "", customer_notes: "" });
+                            setRxFormError("");
+                            setMessages((prev) => [
+                              ...prev.filter((m) => !m.rxOrderForm),
+                              {
+                                id: `bot-action-${Date.now()}`,
+                                senderType: "AI",
+                                text: "Please fill your details to place the Rx order:",
+                                rxOrderForm: { medicineId: Number(action.medicine_id) },
+                                timestamp: new Date(),
+                                allowPrescriptionUpload: false,
+                              },
+                            ]);
+                            return;
+                          }
+                          if (action.type === "add_to_cart") {
+                            const medicineId = Number(action.medicine_id ?? action.payload?.medicine_id ?? 0);
+                            if (!medicineId) {
                               setMessages((prev) => [
                                 ...prev,
                                 {
                                   id: `bot-action-${Date.now()}`,
-                                  type: "bot",
-                                  text: "Please upload your prescription below.",
+                                  senderType: "AI",
+                                  text: "I couldn't identify the medicine to add. Please try again.",
                                   timestamp: new Date(),
-                                  allowPrescriptionUpload: true,
+                                  allowPrescriptionUpload: false,
                                 },
                               ]);
                               return;
                             }
-                          }}
-                          className="px-3 py-1.5 text-sm bg-white/80 border border-[var(--brand-primary)] text-[var(--brand-primary)] rounded-full hover:bg-[var(--brand-primary)] hover:text-white transition-colors"
-                        >
-                          {action.label ?? action.type}
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
-                  {message.appointmentForm ? (
-                    <form onSubmit={handleAppointmentSubmit} className="mt-3 space-y-2 max-w-[85%]">
-                      <input
-                        value={apptForm.customer_name}
-                        onChange={(event) => setApptForm((prev) => ({ ...prev, customer_name: event.target.value }))}
-                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
-                        placeholder="Full name"
-                        required
-                      />
-                      <PhoneInput
-                        value={apptForm.customer_phone}
-                        onChange={(next) => setApptForm((prev) => ({ ...prev, customer_phone: next }))}
-                        className="bg-white"
-                        placeholder="Phone number"
-                        required
-                      />
-                      <input
-                        type="email"
-                        value={apptForm.customer_email}
-                        onChange={(event) => setApptForm((prev) => ({ ...prev, customer_email: event.target.value }))}
-                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
-                        placeholder="Email for reminders (optional)"
-                      />
-                      <select
-                        value={apptForm.type}
-                        onChange={(event) => setApptForm((prev) => ({ ...prev, type: event.target.value }))}
-                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                            const resolvedPharmacyId = await resolvePharmacyId();
+                            if (!resolvedPharmacyId) {
+                              setMessages((prev) => [
+                                ...prev,
+                                {
+                                  id: `bot-action-${Date.now()}`,
+                                  senderType: "AI",
+                                  text: "I couldn't load the pharmacy yet. Please refresh and try again.",
+                                  timestamp: new Date(),
+                                  allowPrescriptionUpload: false,
+                                },
+                              ]);
+                              return;
+                            }
+                            try {
+                              const res = await api.post(`/pharmacies/${resolvedPharmacyId}/cart/items`, {
+                                medicine_id: medicineId,
+                                quantity: Number(action.payload?.quantity ?? 1),
+                              });
+                              const item = res.data ?? {};
+                              addItem({
+                                item_type: "medicine",
+                                item_id: item.medicine_id,
+                                name: item.name,
+                                price: item.price,
+                              });
+                              setMessages((prev) => [
+                                ...prev,
+                                {
+                                  id: `bot-action-${Date.now()}`,
+                                  senderType: "AI",
+                                  text: "Added. Do you want another medicine or any other service?",
+                                  timestamp: new Date(),
+                                  allowPrescriptionUpload: false,
+                                  quickReplies: ["Search another medicine", "Shop OTC products", "Book appointment", "Contact pharmacy"],
+                                },
+                              ]);
+                            } catch (err) {
+                              setMessages((prev) => [
+                                ...prev,
+                                {
+                                  id: `bot-action-${Date.now()}`,
+                                  senderType: "AI",
+                                  text: err?.response?.data?.detail ?? "I couldn't add that to the cart. Please try again.",
+                                  timestamp: new Date(),
+                                  allowPrescriptionUpload: false,
+                                },
+                              ]);
+                            }
+                            return;
+                          }
+                          if (action.type === "upload_prescription") {
+                            setRxOrderDraft({ medicineId: Number(action.medicine_id ?? 0) || null });
+                            setMessages((prev) => [
+                              ...prev,
+                              {
+                                id: `bot-action-${Date.now()}`,
+                                senderType: "AI",
+                                text: "Please upload your prescription below.",
+                                timestamp: new Date(),
+                                allowPrescriptionUpload: true,
+                              },
+                            ]);
+                            return;
+                          }
+                        }}
+                        className="px-3 py-1.5 text-sm bg-white/80 border border-[var(--brand-primary)] text-[var(--brand-primary)] rounded-full hover:bg-[var(--brand-primary)] hover:text-white transition-colors"
                       >
-                        <option value="Consultation">Consultation</option>
-                        <option value="Medication Review">Medication review</option>
-                        <option value="Vaccination">Vaccination</option>
-                      </select>
-                      <input
-                        type="date"
-                        value={apptDate}
-                        onChange={handleApptDateChange}
-                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
-                        required
-                      />
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between text-xs text-slate-600">
-                          <span>Available slots</span>
-                          {isLoadingApptSlots ? <span>Loading...</span> : null}
-                        </div>
-                        {apptSlotsError ? <div className="text-xs text-red-600">{apptSlotsError}</div> : null}
-                        {openApptSlots.length === 0 && !isLoadingApptSlots ? (
-                          <div className="text-xs text-slate-500">No open slots for this day.</div>
-                        ) : (
-                          <div className="flex flex-wrap gap-2">
-                            {openApptSlots.map((slot) => {
-                              const start = new Date(slot.start);
-                              const label = start.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-                              const isSelected = apptForm.scheduled_time === slot.start;
-                              return (
-                                <button
-                                  key={slot.start}
-                                  type="button"
-                                  onClick={() => setApptForm((prev) => ({ ...prev, scheduled_time: slot.start }))}
-                                  className={`px-3 py-1.5 rounded-lg border text-xs transition ${
-                                    isSelected
-                                      ? "border-blue-600 bg-blue-600 text-white"
-                                      : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                                  }`}
-                                >
-                                  {label}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                      {apptForm.type === "Vaccination" ? (
-                        <input
-                          value={apptForm.vaccine_name}
-                          onChange={(event) => setApptForm((prev) => ({ ...prev, vaccine_name: event.target.value }))}
-                          className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
-                          placeholder="Vaccine name (Flu, COVID-19, etc.)"
-                          required
-                        />
-                      ) : null}
-                      {apptError ? <div className="text-xs text-red-600">{apptError}</div> : null}
-                      <button
-                        type="submit"
-                        disabled={isSubmittingAppt}
-                        className="w-full py-2.5 bg-[var(--brand-accent)] text-white rounded-xl hover:opacity-95 disabled:bg-gray-300 disabled:cursor-not-allowed"
-                      >
-                        {isSubmittingAppt ? "Submitting..." : "Reserve appointment"}
+                        {action.label ?? action.type}
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => setMessages((prev) => prev.filter((m) => !m.appointmentForm))}
-                        className="w-full py-2.5 border border-slate-200 rounded-xl text-gray-700 hover:bg-slate-50"
-                      >
-                        Cancel
-                      </button>
-                    </form>
-                  ) : null}
-                  {message.rxOrderForm && message.rxOrderForm.medicineId ? (
-                    <form
-                      onSubmit={(event) => handleRxOrderSubmit(event, message.rxOrderForm.medicineId)}
-                      className="mt-3 space-y-2 max-w-[85%]"
+                    ))}
+                  </div>
+                ) : null}
+                {isAi && message.appointmentForm ? (
+                  <form onSubmit={handleAppointmentSubmit} className="mt-3 space-y-2 max-w-[85%]">
+                    <input
+                      value={apptForm.customer_name}
+                      onChange={(event) => setApptForm((prev) => ({ ...prev, customer_name: event.target.value }))}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                      placeholder="Full name"
+                      required
+                    />
+                    <PhoneInput
+                      value={apptForm.customer_phone}
+                      onChange={(next) => setApptForm((prev) => ({ ...prev, customer_phone: next }))}
+                      className="bg-white"
+                      placeholder="Phone number"
+                      required
+                    />
+                    <input
+                      type="email"
+                      value={apptForm.customer_email}
+                      onChange={(event) => setApptForm((prev) => ({ ...prev, customer_email: event.target.value }))}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                      placeholder="Email for reminders (optional)"
+                    />
+                    <select
+                      value={apptForm.type}
+                      onChange={(event) => setApptForm((prev) => ({ ...prev, type: event.target.value }))}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
                     >
-                      <input
-                        value={rxForm.customer_name}
-                        onChange={(event) => setRxForm((prev) => ({ ...prev, customer_name: event.target.value }))}
-                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
-                        placeholder="Full name"
-                        required
-                      />
-                      <PhoneInput
-                        value={rxForm.customer_phone}
-                        onChange={(next) => setRxForm((prev) => ({ ...prev, customer_phone: next }))}
-                        className="bg-white"
-                        placeholder="Phone number"
-                        required
-                      />
-                      <textarea
-                        value={rxForm.customer_address}
-                        onChange={(event) => setRxForm((prev) => ({ ...prev, customer_address: event.target.value }))}
-                        rows="2"
-                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
-                        placeholder="Delivery address"
-                        required
-                      />
-                      <textarea
-                        value={rxForm.customer_notes}
-                        onChange={(event) => setRxForm((prev) => ({ ...prev, customer_notes: event.target.value }))}
-                        rows="2"
-                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
-                        placeholder="Notes (optional)"
-                      />
-                      {rxFormError ? <div className="text-xs text-red-600">{rxFormError}</div> : null}
-                      <button
-                        type="submit"
-                        disabled={isPlacingRxOrder}
-                        className="w-full py-2.5 bg-[var(--brand-accent)] text-white rounded-xl hover:opacity-95 disabled:bg-gray-300 disabled:cursor-not-allowed"
-                      >
-                        {isPlacingRxOrder ? "Placing Rx order..." : "Place Rx order"}
-                      </button>
-                    </form>
-                  ) : null}
-                  {message.quickReplies && message.quickReplies.length > 0 ? (
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {message.quickReplies.map((reply) => (
-                        <button
-                          key={reply}
-                          type="button"
-                          onClick={() => handleSuggestionClick(reply)}
-                          className="px-3 py-1.5 text-sm bg-white/80 border border-slate-200 text-gray-700 rounded-full hover:bg-slate-100 transition-colors"
-                        >
-                          {reply}
-                        </button>
-                      ))}
+                      <option value="Consultation">Consultation</option>
+                      <option value="Medication Review">Medication review</option>
+                      <option value="Vaccination">Vaccination</option>
+                    </select>
+                    <input
+                      type="date"
+                      value={apptDate}
+                      onChange={handleApptDateChange}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                      required
+                    />
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between text-xs text-slate-600">
+                        <span>Available slots</span>
+                        {isLoadingApptSlots ? <span>Loading...</span> : null}
+                      </div>
+                      {apptSlotsError ? <div className="text-xs text-red-600">{apptSlotsError}</div> : null}
+                      {openApptSlots.length === 0 && !isLoadingApptSlots ? (
+                        <div className="text-xs text-slate-500">No open slots for this day.</div>
+                      ) : (
+                        <div className="flex flex-wrap gap-2">
+                          {openApptSlots.map((slot) => {
+                            const start = new Date(slot.start);
+                            const label = start.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+                            const isSelected = apptForm.scheduled_time === slot.start;
+                            return (
+                              <button
+                                key={slot.start}
+                                type="button"
+                                onClick={() => setApptForm((prev) => ({ ...prev, scheduled_time: slot.start }))}
+                                className={`px-3 py-1.5 rounded-lg border text-xs transition ${
+                                  isSelected
+                                    ? "border-blue-600 bg-blue-600 text-white"
+                                    : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                                }`}
+                              >
+                                {label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
-                  ) : null}
-                  {message.freshness && (message.freshness.dataLastUpdatedAt || message.freshness.indexedAt) ? (
-                    <div className="mt-2 text-[11px] text-gray-500">
-                      {message.freshness.dataLastUpdatedAt
-                        ? `Data last updated: ${new Date(message.freshness.dataLastUpdatedAt).toLocaleString()}`
-                        : "Data last updated: -"}
-                      {" - "}
-                      {message.freshness.indexedAt
-                        ? `Indexed at: ${new Date(message.freshness.indexedAt).toLocaleString()}`
-                        : "Indexed at: -"}
-                    </div>
-                  ) : null}
-                  {message.allowPrescriptionUpload ? (
-                    <form onSubmit={handleUpload} className="mt-3 space-y-2">
+                    {apptForm.type === "Vaccination" ? (
                       <input
-                        type="file"
-                        accept="image/*,application/pdf"
-                        multiple
-                        onChange={(event) =>
-                          setUploadState((prev) => ({ ...prev, files: Array.from(event.target.files ?? []) }))
-                        }
-                        className="w-full text-sm"
+                        value={apptForm.vaccine_name}
+                        onChange={(event) => setApptForm((prev) => ({ ...prev, vaccine_name: event.target.value }))}
+                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                        placeholder="Vaccine name (Flu, COVID-19, etc.)"
+                        required
                       />
-                      {uploadState.error ? <p className="text-xs text-red-600">{uploadState.error}</p> : null}
-                      {uploadState.status ? <p className="text-xs text-green-600">{uploadState.status}</p> : null}
-                      {uploadState.tokens && uploadState.tokens.length > 0 ? (
-                        <p className="text-[11px] text-gray-600">
-                          Saved on this device. You can also keep this reference: {uploadState.tokens[0]}
-                        </p>
-                      ) : null}
+                    ) : null}
+                    {apptError ? <div className="text-xs text-red-600">{apptError}</div> : null}
+                    <button
+                      type="submit"
+                      disabled={isSubmittingAppt}
+                      className="w-full py-2.5 bg-[var(--brand-accent)] text-white rounded-xl hover:opacity-95 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                    >
+                      {isSubmittingAppt ? "Submitting..." : "Reserve appointment"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMessages((prev) => prev.filter((m) => !m.appointmentForm))}
+                      className="w-full py-2.5 border border-slate-200 rounded-xl text-gray-700 hover:bg-slate-50"
+                    >
+                      Cancel
+                    </button>
+                  </form>
+                ) : null}
+                {isAi && message.rxOrderForm && message.rxOrderForm.medicineId ? (
+                  <form
+                    onSubmit={(event) => handleRxOrderSubmit(event, message.rxOrderForm.medicineId)}
+                    className="mt-3 space-y-2 max-w-[85%]"
+                  >
+                    <input
+                      value={rxForm.customer_name}
+                      onChange={(event) => setRxForm((prev) => ({ ...prev, customer_name: event.target.value }))}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                      placeholder="Full name"
+                      required
+                    />
+                    <PhoneInput
+                      value={rxForm.customer_phone}
+                      onChange={(next) => setRxForm((prev) => ({ ...prev, customer_phone: next }))}
+                      className="bg-white"
+                      placeholder="Phone number"
+                      required
+                    />
+                    <textarea
+                      value={rxForm.customer_address}
+                      onChange={(event) => setRxForm((prev) => ({ ...prev, customer_address: event.target.value }))}
+                      rows="2"
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                      placeholder="Delivery address"
+                      required
+                    />
+                    <textarea
+                      value={rxForm.customer_notes}
+                      onChange={(event) => setRxForm((prev) => ({ ...prev, customer_notes: event.target.value }))}
+                      rows="2"
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                      placeholder="Notes (optional)"
+                    />
+                    {rxFormError ? <div className="text-xs text-red-600">{rxFormError}</div> : null}
+                    <button
+                      type="submit"
+                      disabled={isPlacingRxOrder}
+                      className="w-full py-2.5 bg-[var(--brand-accent)] text-white rounded-xl hover:opacity-95 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                    >
+                      {isPlacingRxOrder ? "Placing Rx order..." : "Place Rx order"}
+                    </button>
+                  </form>
+                ) : null}
+                {isAi && message.quickReplies && message.quickReplies.length > 0 ? (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {message.quickReplies.map((reply) => (
                       <button
-                        type="submit"
-                        className="px-3 py-2 text-sm bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-primary-600)] transition-colors"
+                        key={reply}
+                        type="button"
+                        onClick={() => handleSuggestionClick(reply)}
+                        className="px-3 py-1.5 text-sm bg-white/80 border border-slate-200 text-gray-700 rounded-full hover:bg-slate-100 transition-colors"
                       >
-                        Upload prescription
+                        {reply}
                       </button>
-                    </form>
-                  ) : null}
-                </div>
+                    ))}
+                  </div>
+                ) : null}
+                {isAi && message.freshness && (message.freshness.dataLastUpdatedAt || message.freshness.indexedAt) ? (
+                  <div className="mt-2 text-[11px] text-gray-500">
+                    {message.freshness.dataLastUpdatedAt
+                      ? `Data last updated: ${new Date(message.freshness.dataLastUpdatedAt).toLocaleString()}`
+                      : "Data last updated: -"}
+                    {" - "}
+                    {message.freshness.indexedAt
+                      ? `Indexed at: ${new Date(message.freshness.indexedAt).toLocaleString()}`
+                      : "Indexed at: -"}
+                  </div>
+                ) : null}
+                {isAi && message.allowPrescriptionUpload ? (
+                  <form onSubmit={handleUpload} className="mt-3 space-y-2">
+                    <input
+                      type="file"
+                      accept="image/*,application/pdf"
+                      multiple
+                      onChange={(event) =>
+                        setUploadState((prev) => ({ ...prev, files: Array.from(event.target.files ?? []) }))
+                      }
+                      className="w-full text-sm"
+                    />
+                    {uploadState.error ? <p className="text-xs text-red-600">{uploadState.error}</p> : null}
+                    {uploadState.status ? <p className="text-xs text-green-600">{uploadState.status}</p> : null}
+                    {uploadState.tokens && uploadState.tokens.length > 0 ? (
+                      <p className="text-[11px] text-gray-600">
+                        Saved on this device. You can also keep this reference: {uploadState.tokens[0]}
+                      </p>
+                    ) : null}
+                    <button
+                      type="submit"
+                      className="px-3 py-2 text-sm bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-primary-600)] transition-colors"
+                    >
+                      Upload prescription
+                    </button>
+                  </form>
+                ) : null}
               </div>
-            ) : (
-              <div className="flex justify-end">
-                <div className="bg-[var(--brand-accent)] text-white px-4 py-3 rounded-2xl rounded-tr-none shadow-sm max-w-[85%]">
-                  {message.text}
-                </div>
-              </div>
-            )}
-          </div>
-        ))}
+            </div>
+          );
+        })}
 
         {isTyping ? (
           <div className="flex items-start gap-3">
             <div className="w-8 h-8 bg-[var(--brand-primary)] rounded-full flex items-center justify-center flex-shrink-0">
               <Pill className="w-4 h-4 text-white" />
             </div>
-            <div className="bg-white px-4 py-3 rounded-2xl shadow-sm">
-              <div className="flex gap-1">
-                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
-                <div
-                  className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
-                  style={{ animationDelay: "0.1s" }}
-                ></div>
-                <div
-                  className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
-                  style={{ animationDelay: "0.2s" }}
-                ></div>
+            <div>
+              <div className="text-[11px] text-gray-500 mb-1">AI Assistant</div>
+              <div className="bg-white px-4 py-3 rounded-2xl shadow-sm">
+                <div className="flex gap-1">
+                  <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
+                  <div
+                    className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
+                    style={{ animationDelay: "0.1s" }}
+                  ></div>
+                  <div
+                    className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
+                    style={{ animationDelay: "0.2s" }}
+                  ></div>
+                </div>
               </div>
             </div>
           </div>

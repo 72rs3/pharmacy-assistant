@@ -18,6 +18,8 @@ from app.routes.prescription_routes import router as prescription_router
 from app.routes.appointment_routes import router as appointment_router
 from app.routes.ai_routes import router as ai_router
 from app.routes.cart_routes import router as cart_router
+from app.routes.chat_routes import router as chat_router
+from app.routes.pharmacist_routes import router as pharmacist_router
 from app.appointments.reminders import process_due_reminders, process_no_shows
 
 def _split_csv(value: str | None) -> list[str]:
@@ -48,6 +50,8 @@ def _required_tables() -> set[str]:
         "appointment_reminders",
         "ai_interactions",
         "ai_logs",
+        "chat_sessions",
+        "chat_messages",
         "documents",
         "document_chunks",
     }
@@ -137,6 +141,8 @@ app.include_router(prescription_router)
 app.include_router(appointment_router)
 app.include_router(ai_router)
 app.include_router(cart_router)
+app.include_router(chat_router)
+app.include_router(pharmacist_router)
 
 
 @app.get("/")

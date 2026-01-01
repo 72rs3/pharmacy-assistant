@@ -133,13 +133,13 @@ def _stub_generate(tool_context: dict) -> str:
             stock = int(item.get("stock") or 0)
             price = item.get("price")
             if rx:
-                answer = f"Yes — we have {name} in stock ({stock}). This medicine requires a prescription."
+                answer = f"Yes, we have {name} available. This medicine requires a prescription."
                 actions = [{"type": "upload_prescription", "label": "Upload prescription", "payload": {"medicine_id": int(item.get("id"))}}]
             elif stock > 0:
-                answer = f"Yes — we have {name} in stock ({stock})." + (f" Price: {float(price):.2f}." if price is not None else "")
+                answer = f"Yes, we have {name} available." + (f" Price: {float(price):.2f}." if price is not None else "")
                 actions = [{"type": "add_to_cart", "label": "Add to cart", "payload": {"medicine_id": int(item.get("id")), "quantity": 1}}]
             else:
-                answer = f"Sorry — {name} is out of stock."
+                answer = f"Sorry, {name} is out of stock."
         elif suggestions:
             answer = "I could not find an exact match. Did you mean: " + ", ".join(suggestions)
 

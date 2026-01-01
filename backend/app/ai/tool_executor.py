@@ -406,7 +406,10 @@ async def build_tool_context(
                         payload={"medicine_id": mid},
                     )
                 )
-                immediate_answer = f"Yes, we have {name} in stock ({stock}). This medicine requires a prescription.{price_text} Would you like to upload your prescription?"
+                immediate_answer = (
+                    f"Yes, we have {name} available. See the details card below. "
+                    f"This medicine requires a prescription.{price_text} Would you like to upload your prescription?"
+                )
             elif stock > 0:
                 actions.append(
                     schemas.AIAction(
@@ -416,9 +419,15 @@ async def build_tool_context(
                         payload={"medicine_id": mid, "quantity": 1},
                     )
                 )
-                immediate_answer = f"Yes, we have {name} in stock ({stock}).{price_text} Would you like me to add it to your cart?"
+                immediate_answer = (
+                    f"Yes, we have {name} available. See the details card below."
+                    f"{price_text} Would you like me to add it to your cart?"
+                )
             else:
-                immediate_answer = f"Sorry, {name} is currently out of stock.{price_text} Do you want to search another medicine?"
+                immediate_answer = (
+                    f"Sorry, {name} is currently out of stock.{price_text} "
+                    "See the details card below. Do you want to search another medicine?"
+                )
         elif suggestions:
             immediate_answer = "I could not find an exact match. Did you mean: " + ", ".join(suggestions[:3]) + "?"
         else:
@@ -483,7 +492,11 @@ async def build_tool_context(
         )
         if items:
             if len(items) == 1:
-                immediate_answer = f"Yes, we have {items[0].get('name')} in stock ({items[0].get('stock')})."
+                stock = int(items[0].get("stock") or 0)
+                if stock > 0:
+                    immediate_answer = f"Yes, {items[0].get('name')} is available."
+                else:
+                    immediate_answer = f"Sorry, {items[0].get('name')} is currently out of stock."
             else:
                 immediate_answer = "Here are a few products I found: " + ", ".join(str(it.get("name")) for it in items[:3]) + "."
         elif suggestions:

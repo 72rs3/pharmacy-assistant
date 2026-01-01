@@ -206,7 +206,7 @@ export default function PortalShell({ children }) {
       const [ordersRes, appointmentsRes, escalationsRes, rxRes] = await Promise.all([
         api.get("/orders/owner"),
         api.get("/appointments/owner"),
-        api.get("/ai/escalations/owner"),
+        api.get("/admin/pharmacist/sessions", { params: { status_filter: "ESCALATED" } }),
         api.get("/prescriptions/owner"),
       ]);
 
