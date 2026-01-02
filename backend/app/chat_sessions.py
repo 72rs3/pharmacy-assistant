@@ -56,6 +56,8 @@ def get_or_create_session(
         )
         if session and session.user_session_id and session.user_session_id != user_session_id:
             session = None
+        if session and session.status == "CLOSED":
+            session = None
         if session and is_session_expired(session):
             close_session_if_expired(db, session)
             session = None

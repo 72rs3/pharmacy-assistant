@@ -52,8 +52,8 @@ const dedupeReplies = (values) => {
   return out;
 };
 
-const splitReplies = (values) => {
-  const deduped = dedupeReplies(values);
+const splitReplies = (values, { excludeKeys = new Set() } = {}) => {
+  const deduped = dedupeReplies(values).filter((reply) => !excludeKeys.has(normalizeReplyKey(reply)));
   const context = [];
   const global = [];
   deduped.forEach((reply) => {
@@ -61,6 +61,11 @@ const splitReplies = (values) => {
     else context.push(reply);
   });
   return { context, global };
+};
+
+const dedupeAcross = (primary, secondary) => {
+  const seen = new Set(primary.map((item) => normalizeReplyKey(item)));
+  return secondary.filter((item) => !seen.has(normalizeReplyKey(item)));
 };
 
 const shouldOfferPrescriptionUpload = (text) => {
@@ -144,6 +149,24 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
     tokens: [],
   });
   const messagesEndRef = useRef(null);
+
+  const resetChatSession = () => {
+    setIsEscalated(false);
+    setShowGlobalActions(false);
+    setSessionId("");
+    if (typeof window !== "undefined") {
+      localStorage.removeItem(SESSION_ID_KEY);
+    }
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: `system-new-session-${Date.now()}`,
+        senderType: "SYSTEM",
+        text: "You can continue with the AI assistant now. A new consultation will start if needed.",
+        timestamp: new Date(),
+      },
+    ]);
+  };
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -772,10 +795,18 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
           const isAi = senderType === "AI";
           const label = isUser ? "You" : isPharmacist ? "Pharmacist" : isAi ? "AI Assistant" : "System";
           const timeLabel = formatTime(message.timestamp);
-          const { context: quickReplies, global: globalReplies } = splitReplies(message.quickReplies);
+          const actionLabels = Array.isArray(message.actions)
+            ? message.actions.map((action) => String(action?.label ?? "")).filter(Boolean)
+            : [];
+          const excludeKeys = new Set(actionLabels.map((labelValue) => normalizeReplyKey(labelValue)));
+
           const suggestions = dedupeReplies(message.suggestions);
+          const { context: quickRepliesRaw, global: globalReplies } = splitReplies(message.quickReplies, { excludeKeys });
+          const quickReplies = dedupeAcross(suggestions, quickRepliesRaw);
 
           if (isSystem) {
+            const systemText = String(message.text ?? "");
+            const isClosed = systemText === "Consultation closed" || systemText === "Session expired due to inactivity";
             return (
               <div key={message.id} className="flex justify-center">
                 <div className="max-w-[85%] text-center text-xs text-gray-600 bg-white border border-gray-200 px-3 py-2 rounded-xl shadow-sm">
@@ -784,6 +815,17 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
                     {timeLabel ? ` - ${timeLabel}` : ""}
                   </div>
                   <div className="mt-1 whitespace-pre-line">{message.text}</div>
+                  {isClosed ? (
+                    <div className="mt-2 flex justify-center">
+                      <button
+                        type="button"
+                        onClick={resetChatSession}
+                        className="px-3 py-1.5 text-xs bg-white border border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50"
+                      >
+                        Continue with AI
+                      </button>
+                    </div>
+                  ) : null}
                 </div>
               </div>
             );
