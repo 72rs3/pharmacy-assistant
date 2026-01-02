@@ -291,8 +291,8 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
     };
   }, [chatId, isEscalated, isOpen, sessionId]);
 
-  const handleSend = async () => {
-    const trimmed = inputValue.trim();
+  const handleSend = async (overrideText) => {
+    const trimmed = String(overrideText ?? inputValue).trim();
     if (!trimmed) return;
 
     const userMessage = {
@@ -303,7 +303,7 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
     };
 
     setMessages((prev) => [...prev, userMessage]);
-    setInputValue("");
+    if (overrideText == null) setInputValue("");
     setIsTyping(true);
 
     try {
@@ -488,7 +488,7 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
       navigate("/shop");
       return;
     }
-    setInputValue(suggestion);
+    handleSend(suggestion);
   };
 
   const getAppointmentTrackingCode = () => {
