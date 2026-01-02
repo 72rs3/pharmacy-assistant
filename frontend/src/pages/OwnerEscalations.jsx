@@ -1,17 +1,29 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import api from "../api/axios";
 
+const parseBackendDate = (value) => {
+  if (!value) return null;
+  if (value instanceof Date) return value;
+  if (typeof value === "string") {
+    const hasTimezone = /([zZ]|[+-]\d{2}:\d{2})$/.test(value);
+    return new Date(hasTimezone ? value : `${value}Z`);
+  }
+  return new Date(value);
+};
+
 const formatDate = (value) => {
   if (!value) return "";
-  const date = new Date(value);
+  const date = parseBackendDate(value);
+  if (!date) return "";
   if (Number.isNaN(date.getTime())) return String(value);
   return date.toLocaleString();
 };
 
 const formatTime = (value) => {
   if (!value) return "";
-  const date = new Date(value);
+  const date = parseBackendDate(value);
+  if (!date) return "";
   if (Number.isNaN(date.getTime())) return "";
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 };
@@ -33,6 +45,11 @@ export default function OwnerEscalations() {
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState("");
   const [actionError, setActionError] = useState("");
+
+  const selectedSession = useMemo(
+    () => sessions.find((session) => session.session_id === selectedSessionId) ?? null,
+    [selectedSessionId, sessions]
+  );
 
   const loadSessions = async () => {
     setIsLoadingSessions(true);
@@ -96,6 +113,20 @@ export default function OwnerEscalations() {
       setActionError(err?.response?.data?.detail ?? "Failed to send reply");
     } finally {
       setIsSending(false);
+    }
+  };
+
+  const closeConsultation = async () => {
+    if (!selectedSessionId) return;
+    setActionError("");
+    try {
+      await api.post(`/admin/pharmacist/sessions/${selectedSessionId}/close`);
+      setReplyText("");
+      setMessages([]);
+      setSelectedSessionId("");
+      await loadSessions();
+    } catch (err) {
+      setActionError(err?.response?.data?.detail ?? "Failed to close consultation");
     }
   };
 
@@ -164,6 +195,41 @@ export default function OwnerEscalations() {
                 <div className="text-sm text-slate-500">No messages yet.</div>
               ) : (
                 <div className="space-y-4">
+                  {selectedSession && selectedSession.intake_data ? (
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                      <div className="text-xs font-semibold text-slate-700 mb-2">Patient context</div>
+                      <div className="grid sm:grid-cols-2 gap-2 text-sm text-slate-700">
+                        <div>
+                          <span className="text-xs text-slate-500">Name</span>
+                          <div className="font-medium">{selectedSession.intake_data.customer_name ?? "-"}</div>
+                        </div>
+                        <div>
+                          <span className="text-xs text-slate-500">Phone</span>
+                          <div className="font-medium">{selectedSession.intake_data.customer_phone ?? "-"}</div>
+                        </div>
+                        <div>
+                          <span className="text-xs text-slate-500">Age range</span>
+                          <div className="font-medium">{selectedSession.intake_data.age_range ?? "-"}</div>
+                        </div>
+                        <div>
+                          <span className="text-xs text-slate-500">How long</span>
+                          <div className="font-medium">{selectedSession.intake_data.how_long ?? "-"}</div>
+                        </div>
+                        <div className="sm:col-span-2">
+                          <span className="text-xs text-slate-500">Main concern</span>
+                          <div className="font-medium whitespace-pre-line">{selectedSession.intake_data.main_concern ?? "-"}</div>
+                        </div>
+                        <div>
+                          <span className="text-xs text-slate-500">Current medications</span>
+                          <div className="font-medium whitespace-pre-line">{selectedSession.intake_data.current_medications ?? "-"}</div>
+                        </div>
+                        <div>
+                          <span className="text-xs text-slate-500">Allergies</span>
+                          <div className="font-medium whitespace-pre-line">{selectedSession.intake_data.allergies ?? "-"}</div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
                   {messages.map((message) => {
                     const sender = message.sender_type ?? "SYSTEM";
                     const label = senderLabel(sender);
@@ -226,6 +292,14 @@ export default function OwnerEscalations() {
                     className="px-5 py-2.5 rounded-xl bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60"
                   >
                     {isSending ? "Sending..." : "Send reply"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={closeConsultation}
+                    disabled={!selectedSessionId}
+                    className="px-5 py-2.5 rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                  >
+                    Close consultation
                   </button>
                   <span className="text-xs text-slate-500">Replies are posted in the live customer chat.</span>
                 </div>

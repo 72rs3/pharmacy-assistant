@@ -23,10 +23,32 @@ const shouldOfferPrescriptionUpload = (text) => {
   return normalized.includes("prescription required") || normalized.includes("requires prescription");
 };
 
+const parseBackendDate = (value) => {
+  if (!value) return null;
+  if (value instanceof Date) return value;
+  if (typeof value === "string") {
+    const hasTimezone = /([zZ]|[+-]\d{2}:\d{2})$/.test(value);
+    return new Date(hasTimezone ? value : `${value}Z`);
+  }
+  return new Date(value);
+};
+
 export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr", placement = "viewport" }) {
   const navigate = useNavigate();
   const { addItem } = useCustomerCart();
   const { pharmacy } = useTenant() ?? {};
+  const [isEscalated, setIsEscalated] = useState(false);
+  const [intakeDraft, setIntakeDraft] = useState({
+    customer_name: "",
+    customer_phone: "",
+    age_range: "18-24",
+    main_concern: "",
+    how_long: "1-3 days",
+    current_medications: "",
+    allergies: "",
+  });
+  const [intakeError, setIntakeError] = useState("");
+  const [isSubmittingIntake, setIsSubmittingIntake] = useState(false);
   const [rxOrderDraft, setRxOrderDraft] = useState({ medicineId: null, showForm: false });
   const [rxForm, setRxForm] = useState({
     customer_name: "",
@@ -109,6 +131,7 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
         });
         if (!isActive) return;
         const items = res.data ?? [];
+        let escalated = false;
         const history = items.map((item) => {
           const meta = item.metadata ?? {};
           const actions = Array.isArray(meta.actions) ? meta.actions : [];
@@ -118,12 +141,18 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
           const indexedAt = meta.indexed_at ?? null;
           const intent = meta.intent ?? "";
           const text = item.text ?? "";
+          if ((item.sender_type ?? "") === "SYSTEM") {
+            if (text === "Escalated to pharmacist") escalated = true;
+            if (text === "Consultation closed") escalated = false;
+            if (text === "Session expired due to inactivity") escalated = false;
+          }
           return {
             id: `msg-${item.id}`,
             senderType: item.sender_type ?? "SYSTEM",
             text,
-            timestamp: new Date(item.created_at),
+            timestamp: parseBackendDate(item.created_at) ?? new Date(),
             intent,
+            meta,
             actions,
             cards,
             quickReplies,
@@ -135,6 +164,7 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
           };
         });
         setMessages((prev) => [prev[0], ...history]);
+        setIsEscalated(escalated);
       } catch {
         // Keep existing messages on failure.
       }
@@ -145,6 +175,47 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
       isActive = false;
     };
   }, [chatId, isOpen, sessionId]);
+
+  useEffect(() => {
+    if (!isOpen || !chatId || !sessionId || !isEscalated) return;
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const res = await api.get(`/chat/sessions/${sessionId}/messages`, {
+          headers: { "X-Chat-ID": chatId },
+        });
+        if (cancelled) return;
+        const items = res.data ?? [];
+        let escalated = false;
+        const history = items.map((item) => {
+          const meta = item.metadata ?? {};
+          const text = item.text ?? "";
+          if ((item.sender_type ?? "") === "SYSTEM") {
+            if (text === "Escalated to pharmacist") escalated = true;
+            if (text === "Consultation closed") escalated = false;
+            if (text === "Session expired due to inactivity") escalated = false;
+          }
+          return {
+            id: `msg-${item.id}`,
+            senderType: item.sender_type ?? "SYSTEM",
+            text,
+            timestamp: parseBackendDate(item.created_at) ?? new Date(),
+            meta,
+          };
+        });
+        setMessages((prev) => [prev[0], ...history]);
+        setIsEscalated(escalated);
+      } catch {
+        // ignore
+      }
+    };
+    tick();
+    const handle = setInterval(tick, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(handle);
+    };
+  }, [chatId, isEscalated, isOpen, sessionId]);
 
   const handleSend = async () => {
     const trimmed = inputValue.trim();
@@ -162,6 +233,32 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
     setIsTyping(true);
 
     try {
+      if (isEscalated && sessionId) {
+        try {
+          await api.post(
+            `/chat/sessions/${sessionId}/messages`,
+            { text: trimmed },
+            { headers: chatId ? { "X-Chat-ID": chatId } : {} }
+          );
+        } catch (err) {
+          const detail = err?.response?.data?.detail ?? "";
+          if (String(detail).toLowerCase().includes("expired") || err?.response?.status === 410) {
+            setIsEscalated(false);
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: `system-expired-${Date.now()}`,
+                senderType: "SYSTEM",
+                text: "Session expired due to inactivity. Start a new consultation if you still need help.",
+                timestamp: new Date(),
+              },
+            ]);
+            return;
+          }
+          throw err;
+        }
+        return;
+      }
       const res = await api.post(
         "/ai/chat",
         { message: trimmed, session_id: sessionId || undefined },
@@ -192,7 +289,7 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
         id: `bot-${res.data?.interaction_id ?? Date.now()}`,
         senderType: "AI",
         text: answer,
-        timestamp: new Date(res.data?.created_at ?? Date.now()),
+        timestamp: parseBackendDate(res.data?.created_at) ?? new Date(),
         intent,
         allowPrescriptionUpload: shouldOfferPrescriptionUpload(answer),
         freshness: includeFreshness ? { dataLastUpdatedAt, indexedAt } : null,
@@ -208,6 +305,9 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
             timestamp: new Date(),
           }
         : null;
+      if (res.data?.system_message === "Escalated to pharmacist") {
+        setIsEscalated(true);
+      }
       setMessages((prev) => [...prev, ...(systemMessage ? [systemMessage] : []), botMessage]);
 
     } catch {
@@ -223,6 +323,56 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
       ]);
     } finally {
       setIsTyping(false);
+    }
+  };
+
+  const submitIntake = async () => {
+    if (!sessionId) return;
+    setIntakeError("");
+    const customerName = (intakeDraft.customer_name ?? "").trim();
+    const customerPhone = (intakeDraft.customer_phone ?? "").trim();
+    const main = (intakeDraft.main_concern ?? "").trim();
+    if (!customerName) {
+      setIntakeError("Name is required.");
+      return;
+    }
+    if (!customerPhone || !isValidE164(customerPhone)) {
+      setIntakeError("Phone number must be in international format (E.164), e.g. +15551234567.");
+      return;
+    }
+    if (!main || main.length > 200) {
+      setIntakeError("Main concern must be 1-200 characters.");
+      return;
+    }
+    setIsSubmittingIntake(true);
+    try {
+      const res = await api.post(
+        `/chat/sessions/${sessionId}/escalate`,
+        {
+          customer_name: customerName,
+          customer_phone: customerPhone,
+          age_range: intakeDraft.age_range,
+          main_concern: main,
+          how_long: intakeDraft.how_long,
+          current_medications: intakeDraft.current_medications || null,
+          allergies: intakeDraft.allergies || null,
+        },
+        { headers: chatId ? { "X-Chat-ID": chatId } : {} }
+      );
+      setMessages((prev) => [
+        ...prev.filter((m) => !m.intakeForm),
+        {
+          id: `system-${Date.now()}`,
+          senderType: "SYSTEM",
+          text: res.data?.system_message ?? "Escalated to pharmacist",
+          timestamp: new Date(),
+        },
+      ]);
+      setIsEscalated(true);
+    } catch (err) {
+      setIntakeError(err?.response?.data?.detail ?? "Failed to start consultation.");
+    } finally {
+      setIsSubmittingIntake(false);
     }
   };
 
@@ -546,8 +696,10 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
             <Pill className="w-6 h-6 text-[var(--brand-primary)]" />
           </div>
           <div>
-            <div>AI Assistant</div>
-            <div className="text-xs opacity-90">Always here to help</div>
+            <div>{isEscalated ? "Pharmacist Consultation" : "AI Assistant"}</div>
+            <div className="text-xs opacity-90">
+              {isEscalated ? "A pharmacist will reply here" : "Always here to help"}
+            </div>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -616,7 +768,118 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
                 <div className="bg-white text-gray-800 px-4 py-3 rounded-2xl rounded-tl-none shadow-sm max-w-[85%] whitespace-pre-line">
                   {message.text}
                 </div>
-                {isAi && message.suggestions && message.suggestions.length > 0 ? (
+                {message.intakeForm ? (
+                  <form
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      submitIntake();
+                    }}
+                    className="mt-3 space-y-2 max-w-[85%]"
+                  >
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[11px] text-gray-600 mb-1">Full name</label>
+                        <input
+                          value={intakeDraft.customer_name}
+                          onChange={(event) => setIntakeDraft((prev) => ({ ...prev, customer_name: event.target.value }))}
+                          className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                          required
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] text-gray-600 mb-1">Phone</label>
+                        <PhoneInput
+                          value={intakeDraft.customer_phone}
+                          onChange={(next) => setIntakeDraft((prev) => ({ ...prev, customer_phone: next }))}
+                          className="bg-white"
+                          placeholder="e.g. +15551234567"
+                          required
+                        />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[11px] text-gray-600 mb-1">Age range</label>
+                        <select
+                          value={intakeDraft.age_range}
+                          onChange={(event) => setIntakeDraft((prev) => ({ ...prev, age_range: event.target.value }))}
+                          className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                        >
+                          <option value="0-12">0-12</option>
+                          <option value="13-17">13-17</option>
+                          <option value="18-24">18-24</option>
+                          <option value="25-34">25-34</option>
+                          <option value="35-44">35-44</option>
+                          <option value="45-54">45-54</option>
+                          <option value="55-64">55-64</option>
+                          <option value="65+">65+</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[11px] text-gray-600 mb-1">How long</label>
+                        <select
+                          value={intakeDraft.how_long}
+                          onChange={(event) => setIntakeDraft((prev) => ({ ...prev, how_long: event.target.value }))}
+                          className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                        >
+                          <option value="<1 day">&lt;1 day</option>
+                          <option value="1-3 days">1-3 days</option>
+                          <option value=">3 days">&gt;3 days</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-[11px] text-gray-600 mb-1">Main concern</label>
+                      <input
+                        value={intakeDraft.main_concern}
+                        onChange={(event) =>
+                          setIntakeDraft((prev) => ({ ...prev, main_concern: event.target.value.slice(0, 200) }))
+                        }
+                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                        placeholder="Short summary (max 200 chars)"
+                        required
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[11px] text-gray-600 mb-1">Current medications (optional)</label>
+                        <input
+                          value={intakeDraft.current_medications}
+                          onChange={(event) =>
+                            setIntakeDraft((prev) => ({ ...prev, current_medications: event.target.value }))
+                          }
+                          className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] text-gray-600 mb-1">Allergies (optional)</label>
+                        <input
+                          value={intakeDraft.allergies}
+                          onChange={(event) => setIntakeDraft((prev) => ({ ...prev, allergies: event.target.value }))}
+                          className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                        />
+                      </div>
+                    </div>
+                    {intakeError ? <div className="text-xs text-red-600">{intakeError}</div> : null}
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="submit"
+                        disabled={isSubmittingIntake}
+                        className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm disabled:opacity-60"
+                      >
+                        {isSubmittingIntake ? "Starting..." : "Start consultation"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setMessages((prev) => prev.filter((m) => !m.intakeForm))}
+                        className="px-4 py-2 rounded-lg border border-slate-200 text-sm text-gray-700 hover:bg-slate-50"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </form>
+                ) : null}
+                {!isEscalated && isAi && message.suggestions && message.suggestions.length > 0 ? (
                   <div className="mt-2 flex flex-wrap gap-2">
                     {message.suggestions.map((suggestion) => (
                       <button
@@ -630,13 +893,27 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
                     ))}
                   </div>
                 ) : null}
-                {isAi && message.actions && message.actions.length > 0 ? (
+                {!isEscalated && isAi && message.actions && message.actions.length > 0 ? (
                   <div className="mt-2 flex flex-wrap gap-2">
                     {message.actions.map((action, index) => (
                       <button
                         key={`${action.type}-${action.medicine_id ?? "x"}-${index}`}
                         type="button"
                         onClick={async () => {
+                          if (action.type === "escalate_to_pharmacist") {
+                            setIntakeError("");
+                            setMessages((prev) => [
+                              ...prev.filter((m) => !m.intakeForm),
+                              {
+                                id: `intake-${Date.now()}`,
+                                senderType: "AI",
+                                text: "Before I connect you, please fill this quick form:",
+                                timestamp: new Date(),
+                                intakeForm: true,
+                              },
+                            ]);
+                            return;
+                          }
                           if (action.type === "book_appointment") {
                             const today = new Date().toISOString().slice(0, 10);
                             setApptForm({
@@ -915,7 +1192,7 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
                     </button>
                   </form>
                 ) : null}
-                {isAi && message.quickReplies && message.quickReplies.length > 0 ? (
+                {!isEscalated && isAi && message.quickReplies && message.quickReplies.length > 0 ? (
                   <div className="mt-2 flex flex-wrap gap-2">
                     {message.quickReplies.map((reply) => (
                       <button
@@ -929,7 +1206,7 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
                     ))}
                   </div>
                 ) : null}
-                {isAi && message.freshness && (message.freshness.dataLastUpdatedAt || message.freshness.indexedAt) ? (
+                {!isEscalated && isAi && message.freshness && (message.freshness.dataLastUpdatedAt || message.freshness.indexedAt) ? (
                   <div className="mt-2 text-[11px] text-gray-500">
                     {message.freshness.dataLastUpdatedAt
                       ? `Data last updated: ${new Date(message.freshness.dataLastUpdatedAt).toLocaleString()}`

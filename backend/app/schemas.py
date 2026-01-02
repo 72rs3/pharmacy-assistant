@@ -600,9 +600,24 @@ class ChatSessionSummary(BaseModel):
     user_session_id: str
     status: str
     last_activity_at: datetime
+    intake_data: dict | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
 
+class ChatSessionEscalateIn(BaseModel):
+    customer_name: str
+    customer_phone: str
+    age_range: str
+    main_concern: str
+    how_long: str
+    current_medications: str | None = None
+    allergies: str | None = None
+
+
 class ChatSessionReplyIn(BaseModel):
+    text: str
+
+
+class ChatSessionMessageIn(BaseModel):
     text: str

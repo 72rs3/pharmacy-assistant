@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
@@ -22,6 +23,405 @@ from app.deps import get_active_public_pharmacy_id
 
 
 router = APIRouter(prefix="/ai", tags=["AI"])
+
+_HEADACHE_PATTERN = re.compile(r"\b(headache|head\s*ache|migraine|head\s*pain|heache)\b", re.IGNORECASE)
+_HEADACHE_REDFLAG_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"\b(worst headache|thunderclap|sudden(ly)?|came on suddenly)\b", re.IGNORECASE), "sudden / worst-ever"),
+    (re.compile(r"\b(confusion|confused|disoriented|slurred speech|seizure|faint(ing|ed)?|passed out)\b", re.IGNORECASE), "neurologic symptoms"),
+    (re.compile(r"\b(vision (loss|change|changes)|blurred vision|double vision)\b", re.IGNORECASE), "vision changes"),
+    (re.compile(r"\b(weakness|numbness|paralysis)\b", re.IGNORECASE), "weakness / numbness"),
+    (re.compile(r"\b(head injury|hit my head|fell|accident|concussion)\b", re.IGNORECASE), "recent head injury"),
+    (re.compile(r"\b(fever|stiff neck|neck stiffness|rash|photophobia|light sensitivity)\b", re.IGNORECASE), "fever / stiff neck"),
+    (re.compile(r"\b(pregnant|pregnancy)\b", re.IGNORECASE), "pregnancy"),
+]
+
+_ABDOMINAL_PAIN_PATTERN = re.compile(
+    r"\b(stomach pain|stomach ache|abdominal pain|belly pain|tummy ache|stomach cramps|cramps)\b",
+    re.IGNORECASE,
+)
+_ABDOMINAL_REDFLAG_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"\b(severe|unbearable|worst)\b", re.IGNORECASE), "severe pain"),
+    (re.compile(r"\b(sudden(ly)?|came on suddenly)\b", re.IGNORECASE), "sudden onset"),
+    (re.compile(r"\b(vomiting blood|blood in vomit|hematemesis)\b", re.IGNORECASE), "vomiting blood"),
+    (re.compile(r"\b(blood in stool|bloody stool|black stool|tarry stool)\b", re.IGNORECASE), "blood/black stool"),
+    (re.compile(r"\b(faint(ing|ed)?|passed out|confusion|unconscious)\b", re.IGNORECASE), "fainting/confusion"),
+    (re.compile(r"\b(pregnant|pregnancy)\b", re.IGNORECASE), "pregnancy"),
+    (re.compile(r"\b(high fever|fever|rigid abdomen|hard belly)\b", re.IGNORECASE), "fever/rigid abdomen"),
+]
+
+
+def _looks_like_headache(text: str) -> bool:
+    return bool(_HEADACHE_PATTERN.search(text or ""))
+
+
+def _headache_red_flags(text: str) -> list[str]:
+    msg = text or ""
+    found: list[str] = []
+    for pattern, label in _HEADACHE_REDFLAG_PATTERNS:
+        if pattern.search(msg):
+            found.append(label)
+    return found
+
+
+def _looks_like_abdominal_pain(text: str) -> bool:
+    return bool(_ABDOMINAL_PAIN_PATTERN.search(text or ""))
+
+
+def _abdominal_red_flags(text: str) -> list[str]:
+    msg = text or ""
+    found: list[str] = []
+    for pattern, label in _ABDOMINAL_REDFLAG_PATTERNS:
+        if pattern.search(msg):
+            found.append(label)
+    return found
+
+
+def _parse_severity_1_to_10(text: str) -> int | None:
+    match = re.search(r"\b(10|[1-9])\b", (text or ""))
+    if not match:
+        return None
+    try:
+        value = int(match.group(1))
+    except Exception:
+        return None
+    return value if 1 <= value <= 10 else None
+
+
+def _parse_duration_bucket(text: str) -> str | None:
+    msg = (text or "").lower()
+    if any(tok in msg for tok in ["getting worse", "worse", "worsening"]):
+        return ">3 days"
+    if any(tok in msg for tok in ["< 1 day", "<1 day", "today", "this morning", "since morning", "hours", "hour"]):
+        return "<1 day"
+    if any(tok in msg for tok in ["1-3 days", "1 - 3 days", "two days", "3 days", "2 days"]):
+        return "1-3 days"
+    days_match = re.search(r"(\d+)\s*day", msg)
+    if days_match:
+        try:
+            days = int(days_match.group(1))
+            if days <= 0:
+                return None
+            if days < 1:
+                return "<1 day"
+            if days <= 3:
+                return "1-3 days"
+            return ">3 days"
+        except Exception:
+            return None
+    if "week" in msg or "weeks" in msg:
+        return ">3 days"
+    return None
+
+
+def _is_affirmative(text: str) -> bool:
+    msg = (text or "").strip().lower()
+    return msg in {"yes", "y", "yeah", "yep", "i do", "i have", "sure"} or msg.startswith("yes ")
+
+
+def _is_negative(text: str) -> bool:
+    msg = (text or "").strip().lower()
+    return msg in {"no", "n", "nope", "not really"} or msg.startswith("no ")
+
+
+def _maybe_handle_headache_triage(db: Session, pharmacy_id: int, customer_id: str, session: models.ChatSession, user_text: str):
+    triage_action = schemas.AIAction(type="escalate_to_pharmacist", label="Talk to pharmacist")
+
+    last_ai = (
+        db.query(models.ChatMessage)
+        .filter(models.ChatMessage.session_id == session.id, models.ChatMessage.sender_type == "AI")
+        .order_by(models.ChatMessage.created_at.desc())
+        .first()
+    )
+    last_intent = ""
+    if last_ai and isinstance(last_ai.meta, dict):
+        last_intent = str(last_ai.meta.get("intent") or "")
+
+    is_in_flow = last_intent.startswith("HEADACHE_TRIAGE_")
+    is_new_headache = _looks_like_headache(user_text)
+    if not is_in_flow and not is_new_headache:
+        return None
+
+    red_flags_now = _headache_red_flags(user_text)
+
+    def respond(text: str, *, intent: str, quick_replies: list[str] | None = None, strong: bool = False):
+        interaction = models.AIInteraction(
+            customer_id=customer_id,
+            customer_query=user_text,
+            ai_response=text,
+            confidence_score=0.0,
+            escalated_to_human=bool(strong),
+            created_at=datetime.utcnow(),
+            pharmacy_id=pharmacy_id,
+        )
+        db.add(interaction)
+        db.commit()
+        db.refresh(interaction)
+        add_message(
+            db,
+            session,
+            "AI",
+            text,
+            _build_ai_metadata(
+                intent=intent,
+                actions=[triage_action],
+                cards=[],
+                quick_replies=quick_replies or [],
+                data_last_updated_at=None,
+                indexed_at=None,
+            ),
+        )
+        db.commit()
+        return schemas.AIChatOut(
+            interaction_id=interaction.id,
+            customer_id=customer_id,
+            session_id=session.session_id,
+            answer=text,
+            citations=[],
+            cards=[],
+            actions=[triage_action],
+            quick_replies=quick_replies or [],
+            confidence_score=interaction.confidence_score,
+            escalated_to_human=interaction.escalated_to_human,
+            intent=intent,
+            created_at=interaction.created_at,
+            data_last_updated_at=None,
+            indexed_at=None,
+            system_message=None,
+        )
+
+    if red_flags_now:
+        return respond(
+            (
+                "Your symptoms may need urgent medical attention. "
+                "Please start a pharmacist consultation now, and if this feels severe or sudden, seek emergency care."
+            ),
+            intent="HEADACHE_REDFLAG",
+            quick_replies=["Talk to pharmacist"],
+            strong=True,
+        )
+
+    if last_intent == "HEADACHE_TRIAGE_SEVERITY":
+        severity = _parse_severity_1_to_10(user_text)
+        if severity is None:
+            return respond(
+                "On a scale of 1-10, how severe is your headache right now? (1 = mild, 10 = worst)",
+                intent="HEADACHE_TRIAGE_SEVERITY",
+                quick_replies=["1-3 (mild)", "4-7 (moderate)", "8-10 (severe)"],
+            )
+        return respond(
+            "How long have you had this headache?",
+            intent="HEADACHE_TRIAGE_DURATION",
+            quick_replies=["<1 day", "1-3 days", ">3 days", "Getting worse"],
+            strong=severity >= 8,
+        )
+
+    if last_intent == "HEADACHE_TRIAGE_DURATION":
+        bucket = _parse_duration_bucket(user_text)
+        if not bucket:
+            return respond(
+                "How long have you had this headache?",
+                intent="HEADACHE_TRIAGE_DURATION",
+                quick_replies=["<1 day", "1-3 days", ">3 days", "Getting worse"],
+            )
+        return respond(
+            (
+                "Do you have any of these right now: fever, stiff neck, vision changes, confusion/fainting, "
+                "weakness/numbness, or a recent head injury?"
+            ),
+            intent="HEADACHE_TRIAGE_REDFLAGS",
+            quick_replies=["No", "Yes"],
+            strong=bucket == ">3 days",
+        )
+
+    if last_intent == "HEADACHE_TRIAGE_REDFLAGS":
+        has_flags = _is_affirmative(user_text) and not _is_negative(user_text)
+        if has_flags:
+            return respond(
+                (
+                    "Thanks — those symptoms can be serious. Please start a pharmacist consultation now. "
+                    "If this is urgent or worsening, seek medical care immediately."
+                ),
+                intent="HEADACHE_REDFLAG",
+                quick_replies=["Talk to pharmacist"],
+                strong=True,
+            )
+        if not _is_negative(user_text):
+            return respond(
+                (
+                    "Do you have any of these right now: fever, stiff neck, vision changes, confusion/fainting, "
+                    "weakness/numbness, or a recent head injury?"
+                ),
+                intent="HEADACHE_TRIAGE_REDFLAGS",
+                quick_replies=["No", "Yes"],
+            )
+        return respond(
+            (
+                "For mild headaches with no concerning symptoms: rest, drink water, and avoid bright screens. "
+                "If you want, you can look for common OTC options (e.g., paracetamol) - always follow the label. "
+                "If symptoms persist, worsen, or you're unsure, please talk to a pharmacist."
+            ),
+            intent="HEADACHE_SELFCARE",
+            quick_replies=["Search panadol", "Talk to pharmacist"],
+        )
+
+    return respond(
+        "On a scale of 1-10, how severe is your headache right now? (1 = mild, 10 = worst)",
+        intent="HEADACHE_TRIAGE_SEVERITY",
+        quick_replies=["1-3 (mild)", "4-7 (moderate)", "8-10 (severe)"],
+    )
+
+
+def _maybe_handle_abdominal_pain_triage(
+    db: Session,
+    pharmacy_id: int,
+    customer_id: str,
+    session: models.ChatSession,
+    user_text: str,
+):
+    triage_action = schemas.AIAction(type="escalate_to_pharmacist", label="Talk to pharmacist")
+
+    last_ai = (
+        db.query(models.ChatMessage)
+        .filter(models.ChatMessage.session_id == session.id, models.ChatMessage.sender_type == "AI")
+        .order_by(models.ChatMessage.created_at.desc())
+        .first()
+    )
+    last_intent = ""
+    if last_ai and isinstance(last_ai.meta, dict):
+        last_intent = str(last_ai.meta.get("intent") or "")
+
+    is_in_flow = last_intent.startswith("ABDOMINAL_TRIAGE_")
+    is_new = _looks_like_abdominal_pain(user_text)
+    if not is_in_flow and not is_new:
+        return None
+
+    red_flags_now = _abdominal_red_flags(user_text)
+
+    def respond(text: str, *, intent: str, quick_replies: list[str] | None = None, strong: bool = False):
+        interaction = models.AIInteraction(
+            customer_id=customer_id,
+            customer_query=user_text,
+            ai_response=text,
+            confidence_score=0.0,
+            escalated_to_human=bool(strong),
+            created_at=datetime.utcnow(),
+            pharmacy_id=pharmacy_id,
+        )
+        db.add(interaction)
+        db.commit()
+        db.refresh(interaction)
+        add_message(
+            db,
+            session,
+            "AI",
+            text,
+            _build_ai_metadata(
+                intent=intent,
+                actions=[triage_action],
+                cards=[],
+                quick_replies=quick_replies or [],
+                data_last_updated_at=None,
+                indexed_at=None,
+            ),
+        )
+        db.commit()
+        return schemas.AIChatOut(
+            interaction_id=interaction.id,
+            customer_id=customer_id,
+            session_id=session.session_id,
+            answer=text,
+            citations=[],
+            cards=[],
+            actions=[triage_action],
+            quick_replies=quick_replies or [],
+            confidence_score=interaction.confidence_score,
+            escalated_to_human=interaction.escalated_to_human,
+            intent=intent,
+            created_at=interaction.created_at,
+            data_last_updated_at=None,
+            indexed_at=None,
+            system_message=None,
+        )
+
+    if red_flags_now:
+        return respond(
+            (
+                "Your symptoms may need urgent medical attention. Please start a pharmacist consultation now. "
+                "If you have severe pain, bleeding, fainting, or rapidly worsening symptoms, seek emergency care."
+            ),
+            intent="ABDOMINAL_REDFLAG",
+            quick_replies=["Talk to pharmacist"],
+            strong=True,
+        )
+
+    if last_intent == "ABDOMINAL_TRIAGE_SEVERITY":
+        severity = _parse_severity_1_to_10(user_text)
+        if severity is None:
+            return respond(
+                "On a scale of 1-10, how severe is your stomach/abdominal pain right now? (1 = mild, 10 = worst)",
+                intent="ABDOMINAL_TRIAGE_SEVERITY",
+                quick_replies=["1-3 (mild)", "4-7 (moderate)", "8-10 (severe)"],
+            )
+        return respond(
+            "How long have you had this pain?",
+            intent="ABDOMINAL_TRIAGE_DURATION",
+            quick_replies=["<1 day", "1-3 days", ">3 days", "Getting worse"],
+            strong=severity >= 8,
+        )
+
+    if last_intent == "ABDOMINAL_TRIAGE_DURATION":
+        bucket = _parse_duration_bucket(user_text)
+        if not bucket:
+            return respond(
+                "How long have you had this pain?",
+                intent="ABDOMINAL_TRIAGE_DURATION",
+                quick_replies=["<1 day", "1-3 days", ">3 days", "Getting worse"],
+            )
+        return respond(
+            (
+                "Any of these right now: fever, vomiting repeatedly, blood in vomit/stool, black stools, "
+                "fainting/confusion, pregnancy, or severe worsening pain?"
+            ),
+            intent="ABDOMINAL_TRIAGE_REDFLAGS",
+            quick_replies=["No", "Yes"],
+            strong=bucket == ">3 days",
+        )
+
+    if last_intent == "ABDOMINAL_TRIAGE_REDFLAGS":
+        has_flags = _is_affirmative(user_text) and not _is_negative(user_text)
+        if has_flags:
+            return respond(
+                (
+                    "Thanks — those symptoms can be serious. Please start a pharmacist consultation now. "
+                    "If symptoms are severe or worsening, seek medical care immediately."
+                ),
+                intent="ABDOMINAL_REDFLAG",
+                quick_replies=["Talk to pharmacist"],
+                strong=True,
+            )
+        if not _is_negative(user_text):
+            return respond(
+                (
+                    "Any of these right now: fever, vomiting repeatedly, blood in vomit/stool, black stools, "
+                    "fainting/confusion, pregnancy, or severe worsening pain?"
+                ),
+                intent="ABDOMINAL_TRIAGE_REDFLAGS",
+                quick_replies=["No", "Yes"],
+            )
+        return respond(
+            (
+                "For mild abdominal discomfort with no red flags: sip water, eat light foods, and rest. "
+                "If symptoms persist, worsen, or you're unsure, please talk to a pharmacist."
+            ),
+            intent="ABDOMINAL_SELFCARE",
+            quick_replies=["Talk to pharmacist"],
+        )
+
+    return respond(
+        "On a scale of 1-10, how severe is your stomach/abdominal pain right now? (1 = mild, 10 = worst)",
+        intent="ABDOMINAL_TRIAGE_SEVERITY",
+        quick_replies=["1-3 (mild)", "4-7 (moderate)", "8-10 (severe)"],
+    )
 
 
 def _get_customer_chat_id(chat_id: str | None = Header(None, alias="X-Chat-ID")) -> str:
@@ -173,12 +573,56 @@ async def chat(
 
     add_message(db, session, "USER", message)
 
+    if session.status == "ESCALATED":
+        answer = "A pharmacist will reply shortly. If this is urgent, please seek medical care."
+        interaction = models.AIInteraction(
+            customer_id=customer_id,
+            customer_query=message,
+            ai_response=answer,
+            confidence_score=0.0,
+            escalated_to_human=True,
+            created_at=datetime.utcnow(),
+            pharmacy_id=pharmacy_id,
+        )
+        db.add(interaction)
+        db.commit()
+        db.refresh(interaction)
+        session_memory.append_turns(db, pharmacy_id, session_id, message, answer)
+        return schemas.AIChatOut(
+            interaction_id=interaction.id,
+            customer_id=customer_id,
+            session_id=session_id,
+            answer=answer,
+            citations=[],
+            cards=[],
+            actions=[],
+            quick_replies=[],
+            confidence_score=0.0,
+            escalated_to_human=True,
+            intent="RISKY_MEDICAL",
+            created_at=interaction.created_at,
+            data_last_updated_at=None,
+            indexed_at=None,
+            system_message=None,
+        )
+
     try:
         rag_service.ensure_pharmacy_playbook(db, pharmacy_id)
         db.commit()
+        triage = _maybe_handle_headache_triage(db, pharmacy_id, customer_id, session, message)
+        if triage is not None:
+            session_memory.append_turns(db, pharmacy_id, session_id, message, triage.answer)
+            return triage
+        triage = _maybe_handle_abdominal_pain_triage(db, pharmacy_id, customer_id, session, message)
+        if triage is not None:
+            session_memory.append_turns(db, pharmacy_id, session_id, message, triage.answer)
+            return triage
         is_risky, reason = detect_risk(message)
         if is_risky:
-            answer = "A pharmacist will reply shortly. If this is urgent, please seek medical care."
+            answer = (
+                "This may require a pharmacist. Tap 'Escalate to pharmacist' to start a consultation, "
+                "or ask a general non-urgent question."
+            )
             interaction = models.AIInteraction(
                 customer_id=customer_id,
                 customer_query=message,
@@ -191,9 +635,6 @@ async def chat(
             db.add(interaction)
             db.commit()
             db.refresh(interaction)
-            session.status = "ESCALATED"
-            system_message = ESCALATION_SYSTEM_MESSAGE
-            add_message(db, session, "SYSTEM", system_message, {"kind": "escalation", "reason": reason})
             add_message(
                 db,
                 session,
@@ -201,7 +642,7 @@ async def chat(
                 interaction.ai_response,
                 _build_ai_metadata(
                     intent="RISKY_MEDICAL",
-                    actions=[],
+                    actions=[schemas.AIAction(type="escalate_to_pharmacist", label="Escalate to pharmacist")],
                     cards=[],
                     quick_replies=[],
                     data_last_updated_at=None,
@@ -210,7 +651,7 @@ async def chat(
             )
             session_memory.append_turns(db, pharmacy_id, session_id, message, interaction.ai_response)
             _log(db, pharmacy_id, "chat", f"chat_id={customer_id} confidence=0.00 escalated=True rag_top_k=0 retrieved_chunks=[]")
-            _log(db, pharmacy_id, "escalation", f"interaction_id={interaction.id} chat_id={customer_id}")
+            _log(db, pharmacy_id, "escalation", f"interaction_id={interaction.id} chat_id={customer_id} pending_intake=1")
             db.commit()
             return schemas.AIChatOut(
                 interaction_id=interaction.id,
@@ -219,7 +660,7 @@ async def chat(
                 answer=interaction.ai_response,
                 citations=[],
                 cards=[],
-                actions=[],
+                actions=[schemas.AIAction(type="escalate_to_pharmacist", label="Escalate to pharmacist")],
                 quick_replies=[],
                 confidence_score=interaction.confidence_score,
                 escalated_to_human=interaction.escalated_to_human,

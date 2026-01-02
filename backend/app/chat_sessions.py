@@ -9,7 +9,7 @@ from app import models
 from app.ai import session_memory
 
 
-SESSION_TIMEOUT_MINUTES = int(os.getenv("CHAT_SESSION_TIMEOUT_MINUTES", "10"))
+SESSION_TIMEOUT_MINUTES = int(os.getenv("CHAT_SESSION_TIMEOUT_MINUTES", "5"))
 ESCALATION_SYSTEM_MESSAGE = "Escalated to pharmacist"
 
 
@@ -17,6 +17,25 @@ def is_session_expired(session: models.ChatSession) -> bool:
     if not session.last_activity_at:
         return False
     return datetime.utcnow() - session.last_activity_at > timedelta(minutes=SESSION_TIMEOUT_MINUTES)
+
+
+def close_session_if_expired(db: Session, session: models.ChatSession) -> bool:
+    if session.status == "CLOSED":
+        return False
+    if not is_session_expired(session):
+        return False
+    session.status = "CLOSED"
+    session.last_activity_at = datetime.utcnow()
+    last_system = (
+        db.query(models.ChatMessage)
+        .filter(models.ChatMessage.session_id == session.id, models.ChatMessage.sender_type == "SYSTEM")
+        .order_by(models.ChatMessage.created_at.desc())
+        .first()
+    )
+    if not last_system or (last_system.text or "") != "Session expired due to inactivity":
+        add_message(db, session, "SYSTEM", "Session expired due to inactivity", {"kind": "expired"})
+    db.commit()
+    return True
 
 
 def get_or_create_session(
@@ -38,7 +57,7 @@ def get_or_create_session(
         if session and session.user_session_id and session.user_session_id != user_session_id:
             session = None
         if session and is_session_expired(session):
-            session.status = "CLOSED"
+            close_session_if_expired(db, session)
             session = None
         if session and not session.user_session_id:
             session.user_session_id = user_session_id
@@ -55,7 +74,7 @@ def get_or_create_session(
             .first()
         )
         if session and is_session_expired(session):
-            session.status = "CLOSED"
+            close_session_if_expired(db, session)
             session = None
         if session and not session.user_session_id:
             session.user_session_id = user_session_id

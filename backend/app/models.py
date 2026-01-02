@@ -310,6 +310,7 @@ class ChatSession(Base):
     user_session_id = Column(String, nullable=False, index=True)
     status = Column(String, nullable=False, default="ACTIVE")
     last_activity_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    intake_data = Column(JSONB, nullable=True)
     turns_json = Column(Text, nullable=False, default="[]")
     expires_at = Column(DateTime, nullable=False, index=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

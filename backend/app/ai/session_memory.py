@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app import models
 
 
-_TTL_MINUTES = int(os.getenv("CHAT_SESSION_TIMEOUT_MINUTES", "10"))
+_TTL_MINUTES = int(os.getenv("CHAT_SESSION_TIMEOUT_MINUTES", "5"))
 _STATE_KEY_PREFIX = "state:"
 
 

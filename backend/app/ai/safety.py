@@ -7,7 +7,6 @@ from app import models
 
 _RISK_PATTERNS = [
     (r"\bdiagnos(e|is|ing)\b", "diagnosis request"),
-    (r"\b(symptom|symptoms|fever|rash|headache|cough|nausea)\b", "symptom discussion"),
     (r"\b(dosage|dose|mg|ml|increase|decrease|change dose)\b", "dosage change"),
     (r"\b(pregnant|pregnancy|breastfeed|lactat)\b", "pregnancy or breastfeeding"),
     (r"\b(child|infant|baby|toddler|kid)\b", "child guidance"),
@@ -37,7 +36,7 @@ def safe_response(pharmacy: models.Pharmacy | None, reason: str) -> str:
     reason_text = f"Reason: {reason}." if reason else "Reason: medical safety."
     return (
         "I’m not able to provide medical advice or guidance on this topic. "
-        "I will escalate this to a pharmacist for review. "
+        "Please consider speaking with a pharmacist for proper evaluation. "
         f"{reason_text} "
         f"{contact_text} "
         "This is not medical advice. If this is urgent, seek emergency care."
