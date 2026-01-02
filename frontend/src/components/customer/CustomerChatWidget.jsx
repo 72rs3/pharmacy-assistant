@@ -452,6 +452,11 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
 
   const handleSuggestionClick = (suggestion) => {
     const normalized = (suggestion ?? "").toLowerCase();
+    const searchMatch = String(suggestion ?? "").trim().match(/^search\s+(?:for\s+)?(.+)$/i);
+    if (searchMatch && searchMatch[1]) {
+      handleSend(searchMatch[1].trim());
+      return;
+    }
     if (normalized.includes("appointment")) {
       const today = new Date().toISOString().slice(0, 10);
       setApptForm({
