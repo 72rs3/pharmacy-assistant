@@ -18,6 +18,51 @@ const defaultSuggestions = [
   "Book an appointment",
 ];
 
+const GLOBAL_ACTION_LABELS = new Set([
+  "Search another medicine",
+  "Shop OTC products",
+  "Book appointment",
+  "Contact pharmacy",
+]);
+
+const normalizeReplyKey = (value) =>
+  String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/^search\s+(for\s+)?/, "")
+    .replace(/\s+/g, " ");
+
+const dedupeReplies = (values) => {
+  const out = [];
+  const seen = new Map();
+  (values ?? []).forEach((raw) => {
+    const text = String(raw ?? "").trim();
+    if (!text) return;
+    const key = normalizeReplyKey(text);
+    const prevIndex = seen.get(key);
+    if (prevIndex == null) {
+      seen.set(key, out.length);
+      out.push(text);
+      return;
+    }
+    const prev = out[prevIndex] ?? "";
+    const prefersSearch = /^search\s+/i.test(text) && !/^search\s+/i.test(prev);
+    if (prefersSearch) out[prevIndex] = text;
+  });
+  return out;
+};
+
+const splitReplies = (values) => {
+  const deduped = dedupeReplies(values);
+  const context = [];
+  const global = [];
+  deduped.forEach((reply) => {
+    if (GLOBAL_ACTION_LABELS.has(reply)) global.push(reply);
+    else context.push(reply);
+  });
+  return { context, global };
+};
+
 const shouldOfferPrescriptionUpload = (text) => {
   const normalized = (text ?? "").toLowerCase();
   return normalized.includes("prescription required") || normalized.includes("requires prescription");
@@ -38,6 +83,7 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
   const { addItem } = useCustomerCart();
   const { pharmacy } = useTenant() ?? {};
   const [isEscalated, setIsEscalated] = useState(false);
+  const [showGlobalActions, setShowGlobalActions] = useState(false);
   const [intakeDraft, setIntakeDraft] = useState({
     customer_name: "",
     customer_phone: "",
@@ -119,6 +165,11 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
       ];
     });
   }, [brandName]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setShowGlobalActions(false);
+  }, [isEscalated, isOpen]);
 
   useEffect(() => {
     if (!isOpen || !chatId || !sessionId) return;
@@ -721,6 +772,8 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
           const isAi = senderType === "AI";
           const label = isUser ? "You" : isPharmacist ? "Pharmacist" : isAi ? "AI Assistant" : "System";
           const timeLabel = formatTime(message.timestamp);
+          const { context: quickReplies, global: globalReplies } = splitReplies(message.quickReplies);
+          const suggestions = dedupeReplies(message.suggestions);
 
           if (isSystem) {
             return (
@@ -879,14 +932,14 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
                     </div>
                   </form>
                 ) : null}
-                {!isEscalated && isAi && message.suggestions && message.suggestions.length > 0 ? (
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {message.suggestions.map((suggestion) => (
+                {!isEscalated && isAi && suggestions && suggestions.length > 0 ? (
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    {suggestions.map((suggestion) => (
                       <button
                         key={suggestion}
                         type="button"
                         onClick={() => handleSuggestionClick(suggestion)}
-                        className="px-3 py-1.5 text-sm bg-white/80 border border-[var(--brand-primary)] text-[var(--brand-primary)] rounded-full hover:bg-[var(--brand-primary)] hover:text-white transition-colors"
+                        className="px-3 py-2 text-xs sm:text-sm bg-white/80 border border-[var(--brand-primary)] text-[var(--brand-primary)] rounded-xl hover:bg-[var(--brand-primary)] hover:text-white transition-colors text-left"
                       >
                         {suggestion}
                       </button>
@@ -1192,18 +1245,50 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
                     </button>
                   </form>
                 ) : null}
-                {!isEscalated && isAi && message.quickReplies && message.quickReplies.length > 0 ? (
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {message.quickReplies.map((reply) => (
-                      <button
-                        key={reply}
-                        type="button"
-                        onClick={() => handleSuggestionClick(reply)}
-                        className="px-3 py-1.5 text-sm bg-white/80 border border-slate-200 text-gray-700 rounded-full hover:bg-slate-100 transition-colors"
-                      >
-                        {reply}
-                      </button>
-                    ))}
+                {!isEscalated && isAi && quickReplies && quickReplies.length > 0 ? (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {quickReplies.map((reply) => {
+                      const isSearch = /^search\\s+/i.test(reply);
+                      return (
+                        <button
+                          key={reply}
+                          type="button"
+                          onClick={() => handleSuggestionClick(reply)}
+                          className={`px-3 py-2 text-xs sm:text-sm rounded-xl transition-colors text-left ${
+                            isSearch
+                              ? "bg-white border border-[var(--brand-primary)] text-[var(--brand-primary)] hover:bg-[var(--brand-primary)] hover:text-white"
+                              : "bg-white/80 border border-slate-200 text-gray-700 hover:bg-slate-100"
+                          }`}
+                        >
+                          {reply}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+                {!isEscalated && isAi && globalReplies && globalReplies.length > 0 ? (
+                  <div className="mt-3">
+                    <button
+                      type="button"
+                      onClick={() => setShowGlobalActions((prev) => !prev)}
+                      className="text-xs sm:text-sm text-slate-600 hover:text-slate-900 underline underline-offset-4"
+                    >
+                      {showGlobalActions ? "Hide options" : "More options"}
+                    </button>
+                    {showGlobalActions ? (
+                      <div className="mt-2 grid grid-cols-2 gap-2">
+                        {globalReplies.map((reply) => (
+                          <button
+                            key={reply}
+                            type="button"
+                            onClick={() => handleSuggestionClick(reply)}
+                            className="px-3 py-2 text-xs sm:text-sm bg-white/80 border border-slate-200 text-gray-700 rounded-xl hover:bg-slate-100 transition-colors text-left"
+                          >
+                            {reply}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
                 {!isEscalated && isAi && message.freshness && (message.freshness.dataLastUpdatedAt || message.freshness.indexedAt) ? (
