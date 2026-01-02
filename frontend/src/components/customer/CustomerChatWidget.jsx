@@ -450,7 +450,7 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
     }
   };
 
-  const handleSuggestionClick = (suggestion) => {
+  const handleSuggestionClick = (suggestion, context = {}) => {
     const normalized = (suggestion ?? "").toLowerCase();
     const searchMatch = String(suggestion ?? "").trim().match(/^search\s+(?:for\s+)?(.+)$/i);
     if (searchMatch && searchMatch[1]) {
@@ -493,6 +493,24 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
       navigate("/shop");
       return;
     }
+
+    const intent = String(context.intent ?? "");
+    const sourceText = String(context.messageText ?? "");
+    const looksLikeMedicineToken =
+      /^[a-z][a-z\s-]{2,40}$/i.test(String(suggestion ?? "").trim()) &&
+      !/(\bday\b|<|>|\bgetting worse\b|\bmild\b|\bmoderate\b|\bsevere\b|\byes\b|\bno\b)/i.test(
+        String(suggestion ?? "")
+      );
+    const shouldForceSearch =
+      /^MEDICINE/i.test(intent) ||
+      /did you mean/i.test(sourceText) ||
+      /(medicine|product)\s+card/i.test(sourceText);
+
+    if (shouldForceSearch && looksLikeMedicineToken) {
+      handleSend(`Search ${String(suggestion ?? "").trim()}`);
+      return;
+    }
+
     handleSend(suggestion);
   };
 
@@ -985,7 +1003,7 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
                       <button
                         key={suggestion}
                         type="button"
-                        onClick={() => handleSuggestionClick(suggestion)}
+                        onClick={() => handleSuggestionClick(suggestion, { intent: message.intent, messageText: message.text })}
                         className="px-3 py-2 text-xs sm:text-sm bg-white/80 border border-[var(--brand-primary)] text-[var(--brand-primary)] rounded-xl hover:bg-[var(--brand-primary)] hover:text-white transition-colors text-left"
                       >
                         {suggestion}
@@ -1000,6 +1018,14 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
                         key={`${action.type}-${action.medicine_id ?? "x"}-${index}`}
                         type="button"
                         onClick={async () => {
+                          if (action.type === "search_medicine") {
+                            const query = String(action.payload?.query ?? "").trim() || String(action.label ?? "").trim();
+                            if (query) {
+                              const cleaned = query.replace(/^search\s+/i, "").trim();
+                              handleSend(`Search ${cleaned}`);
+                            }
+                            return;
+                          }
                           if (action.type === "escalate_to_pharmacist") {
                             setIntakeError("");
                             setMessages((prev) => [
@@ -1300,7 +1326,7 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
                         <button
                           key={reply}
                           type="button"
-                          onClick={() => handleSuggestionClick(reply)}
+                          onClick={() => handleSuggestionClick(reply, { intent: message.intent, messageText: message.text })}
                           className={`px-3 py-2 text-xs sm:text-sm rounded-xl transition-colors text-left ${
                             isSearch
                               ? "bg-white border border-[var(--brand-primary)] text-[var(--brand-primary)] hover:bg-[var(--brand-primary)] hover:text-white"
@@ -1328,7 +1354,7 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
                           <button
                             key={reply}
                             type="button"
-                            onClick={() => handleSuggestionClick(reply)}
+                            onClick={() => handleSuggestionClick(reply, { intent: message.intent, messageText: message.text })}
                             className="px-3 py-2 text-xs sm:text-sm bg-white/80 border border-slate-200 text-gray-700 rounded-xl hover:bg-slate-100 transition-colors text-left"
                           >
                             {reply}
