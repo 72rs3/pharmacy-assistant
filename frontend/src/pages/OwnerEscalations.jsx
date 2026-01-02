@@ -51,38 +51,47 @@ export default function OwnerEscalations() {
     [selectedSessionId, sessions]
   );
 
-  const loadSessions = async () => {
-    setIsLoadingSessions(true);
-    setError("");
+  const loadSessions = async ({ silent = false } = {}) => {
+    if (!silent) setIsLoadingSessions(true);
+    if (!silent) setError("");
     try {
       const res = await api.get("/admin/pharmacist/sessions", {
         params: { status_filter: "ESCALATED" },
       });
       const items = res.data ?? [];
       setSessions(items);
-      if (!selectedSessionId && items.length) {
-        setSelectedSessionId(items[0].session_id);
+      if (!silent) {
+        if (!selectedSessionId && items.length) {
+          setSelectedSessionId(items[0].session_id);
+        }
+      } else if (selectedSessionId && !items.some((s) => s.session_id === selectedSessionId)) {
+        setSelectedSessionId("");
+        setMessages([]);
       }
     } catch (err) {
-      setSessions([]);
-      setError(err?.response?.data?.detail ?? "Failed to load escalations");
+      if (!silent) {
+        setSessions([]);
+        setError(err?.response?.data?.detail ?? "Failed to load escalations");
+      }
     } finally {
-      setIsLoadingSessions(false);
+      if (!silent) setIsLoadingSessions(false);
     }
   };
 
-  const loadMessages = async (sessionId) => {
+  const loadMessages = async (sessionId, { silent = false } = {}) => {
     if (!sessionId) return;
-    setIsLoadingMessages(true);
-    setActionError("");
+    if (!silent) setIsLoadingMessages(true);
+    if (!silent) setActionError("");
     try {
       const res = await api.get(`/admin/pharmacist/sessions/${sessionId}/messages`);
       setMessages(res.data ?? []);
     } catch (err) {
-      setMessages([]);
-      setActionError(err?.response?.data?.detail ?? "Failed to load chat history");
+      if (!silent) {
+        setMessages([]);
+        setActionError(err?.response?.data?.detail ?? "Failed to load chat history");
+      }
     } finally {
-      setIsLoadingMessages(false);
+      if (!silent) setIsLoadingMessages(false);
     }
   };
 
@@ -93,6 +102,14 @@ export default function OwnerEscalations() {
   useEffect(() => {
     if (!selectedSessionId) return;
     loadMessages(selectedSessionId);
+  }, [selectedSessionId]);
+
+  useEffect(() => {
+    const handle = setInterval(() => {
+      loadSessions({ silent: true });
+      if (selectedSessionId) loadMessages(selectedSessionId, { silent: true });
+    }, 5000);
+    return () => clearInterval(handle);
   }, [selectedSessionId]);
 
   const sendReply = async () => {
