@@ -450,10 +450,12 @@ def _build_ai_metadata(
     data_last_updated_at: datetime | None,
     indexed_at: datetime | None,
 ) -> dict:
+    # Important: this metadata is stored in Postgres JSONB. It must be fully JSON-serializable.
+    # Pydantic `model_dump()` returns Python objects (e.g., `datetime`) by default, so use `mode="json"`.
     return {
         "intent": intent,
-        "actions": [a.model_dump() for a in actions] if actions else [],
-        "cards": [c.model_dump() for c in cards] if cards else [],
+        "actions": [a.model_dump(mode="json") for a in actions] if actions else [],
+        "cards": [c.model_dump(mode="json") for c in cards] if cards else [],
         "quick_replies": quick_replies or [],
         "data_last_updated_at": _format_dt(data_last_updated_at),
         "indexed_at": _format_dt(indexed_at),
