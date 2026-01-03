@@ -4,6 +4,7 @@ import json
 import os
 from typing import Any, Literal
 
+from datetime import date, datetime
 from pydantic import BaseModel, Field, ValidationError
 
 from app.ai.openrouter_client import OpenRouterError, openrouter_chat
@@ -47,6 +48,12 @@ def _extract_json_object(raw: str) -> str | None:
     return cleaned[start : end + 1]
 
 
+def _json_default(value: object) -> str:
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    return str(value)
+
+
 async def _call_model(model: str, *, tool_context: dict, user_message: str, max_tokens: int) -> GeneratedResponse:
     system = (
         "You are a careful pharmacist assistant (not a doctor).\n"
@@ -65,7 +72,7 @@ async def _call_model(model: str, *, tool_context: dict, user_message: str, max_
         '  "escalated": boolean\n'
         "}\n"
     )
-    user = f"USER_MESSAGE:\n{user_message}\n\nTOOL_CONTEXT:\n{json.dumps(tool_context, ensure_ascii=False)}"
+    user = f"USER_MESSAGE:\n{user_message}\n\nTOOL_CONTEXT:\n{json.dumps(tool_context, ensure_ascii=False, default=_json_default)}"
     raw = await openrouter_chat(
         model=model,
         messages=[ChatMessage(role="system", content=system), ChatMessage(role="user", content=user)],

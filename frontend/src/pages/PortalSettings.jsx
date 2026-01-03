@@ -205,6 +205,9 @@ export default function PortalSettings() {
                       <label className="block text-xs font-medium text-slate-600 mb-1" htmlFor="operatingHours">
                         Operating hours
                       </label>
+                      <div className="text-[11px] text-slate-500 mb-2">
+                        Shown to customers and used by the AI assistant for questions like “What time do you close?”
+                      </div>
                       <input
                         id="operatingHours"
                         value={brandingForm.operating_hours}

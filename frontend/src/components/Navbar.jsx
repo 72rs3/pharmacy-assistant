@@ -11,7 +11,7 @@ export default function Navbar() {
   const location = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
   const brandHref = portal ? "/portal" : "/";
-  const brandTitle = portal ? "Pharmacy Assistant" : pharmacy?.name ?? "Pharmacy";
+  const brandTitle = portal ? "Online Genius" : pharmacy?.name ?? "Pharmacy";
 
   useEffect(() => {
     setMenuOpen(false);

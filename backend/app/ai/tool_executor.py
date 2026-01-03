@@ -258,6 +258,22 @@ async def build_tool_context(
     actions: list[schemas.AIAction] = []
     immediate_answer: str | None = None
 
+    # Avoid corrupted/garbled canned Arabic greetings and keep UX consistent across locales.
+    if router.intent == "GREETING" and router.language == "ar":
+        immediate_answer = "مرحباً! كيف يمكنني مساعدتك اليوم؟"
+        citations = [_system_citation("greeting", "Canned greeting")]
+        ctx = ToolContext(
+            intent="GREETING",
+            language=router.language,
+            found=False,
+            items=[],
+            suggestions=[],
+            citations=[c.model_dump() for c in citations],
+            cards=[],
+            quick_replies=_default_quick_replies(),
+        )
+        return ctx, citations, actions, immediate_answer
+
     if router.intent == "GREETING":
         immediate_answer = (
             "مرحباً! كيف يمكنني مساعدتك اليوم؟"
@@ -273,15 +289,19 @@ async def build_tool_context(
     if router.intent == "HOURS_CONTACT":
         parts: list[str] = []
         preview_parts: list[str] = []
+        info: dict[str, str] = {}
         if pharmacy and pharmacy.operating_hours:
             parts.append(f"Store hours: {pharmacy.operating_hours}.")
             preview_parts.append(pharmacy.operating_hours)
+            info["operating_hours"] = pharmacy.operating_hours
         if pharmacy and pharmacy.contact_phone:
             parts.append(f"Phone: {pharmacy.contact_phone}.")
             preview_parts.append(pharmacy.contact_phone)
+            info["contact_phone"] = pharmacy.contact_phone
         if pharmacy and pharmacy.contact_email:
             parts.append(f"Email: {pharmacy.contact_email}.")
             preview_parts.append(pharmacy.contact_email)
+            info["contact_email"] = pharmacy.contact_email
         if parts:
             citations.append(_playbook_citation(pharmacy, "hours_contact", ", ".join(preview_parts)))
             immediate_answer = " ".join(parts)
@@ -292,7 +312,7 @@ async def build_tool_context(
             intent="HOURS_CONTACT",
             language=router.language,
             found=bool(parts),
-            items=[],
+            items=[info] if info else [],
             suggestions=[],
             citations=[c.model_dump() for c in citations],
             cards=[],

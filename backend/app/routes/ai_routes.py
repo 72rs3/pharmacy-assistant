@@ -73,6 +73,9 @@ _SEARCH_AGAIN_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"^\s*search\s+(for\s+)?pain\s+relief\b.*$", re.IGNORECASE),
     re.compile(r"^\s*search\s+(for\s+)?pain\s*kill(er|ers)?\b.*$", re.IGNORECASE),
     re.compile(r"^\s*search\s+(for\s+)?antibiotic(s)?\b.*$", re.IGNORECASE),
+    re.compile(r"^\s*pain\s+relief\b.*$", re.IGNORECASE),
+    re.compile(r"^\s*pain\s*kill(er|ers)?\b.*$", re.IGNORECASE),
+    re.compile(r"^\s*antibiotic(s)?\b.*$", re.IGNORECASE),
 ]
 
 _MSK_PAIN_PATTERN = re.compile(

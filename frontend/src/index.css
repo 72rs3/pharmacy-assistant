@@ -992,11 +992,22 @@ select.input:focus {
   place-items: center;
 }
 
+.portal-auth-mark--image {
+  background: #ffffff;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+}
+
 .portal-auth-pill {
   width: 20px;
   height: 20px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.85);
+}
+
+.portal-auth-logo-image {
+  width: 30px;
+  height: 30px;
+  object-fit: contain;
 }
 
 .portal-auth-title {
