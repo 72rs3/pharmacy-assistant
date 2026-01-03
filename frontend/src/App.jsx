@@ -23,6 +23,7 @@ import OwnerOrders from "./pages/OwnerOrders";
 import OwnerPrescriptions from "./pages/OwnerPrescriptions";
 import OwnerAppointments from "./pages/OwnerAppointments";
 import OwnerEscalations from "./pages/OwnerEscalations";
+import OwnerInbox from "./pages/OwnerInbox";
 import { isPortalHost } from "./utils/tenant";
 
 export default function App() {
@@ -195,6 +196,18 @@ export default function App() {
                 <OwnerRoute>
                   <PortalShell>
                     <OwnerEscalations />
+                  </PortalShell>
+                </OwnerRoute>
+              </PortalGate>
+            }
+          />
+          <Route
+            path="/portal/owner/inbox"
+            element={
+              <PortalGate>
+                <OwnerRoute>
+                  <PortalShell>
+                    <OwnerInbox />
                   </PortalShell>
                 </OwnerRoute>
               </PortalGate>

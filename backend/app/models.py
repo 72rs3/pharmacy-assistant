@@ -44,6 +44,7 @@ class Pharmacy(Base):
     ai_interactions = relationship("AIInteraction", back_populates="pharmacy")
     ai_logs = relationship("AILog", back_populates="pharmacy")
     chat_sessions = relationship("ChatSession", back_populates="pharmacy")
+    contact_messages = relationship("ContactMessage", back_populates="pharmacy")
 
 
 class User(Base):
@@ -78,6 +79,33 @@ class User(Base):
         back_populates="owner",
         foreign_keys="AIInteraction.owner_id",
     )
+    handled_contact_messages = relationship(
+        "ContactMessage",
+        back_populates="handled_by",
+        foreign_keys="ContactMessage.handled_by_user_id",
+    )
+
+
+class ContactMessage(Base):
+    __tablename__ = "contact_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    status = Column(String, nullable=False, default="NEW")
+    name = Column(String, nullable=False)
+    email = Column(String, nullable=False)
+    phone = Column(String, nullable=True)
+    subject = Column(String, nullable=False)
+    message = Column(Text, nullable=False)
+    reply_text = Column(Text, nullable=True)
+    replied_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    pharmacy_id = Column(Integer, ForeignKey("pharmacies.id"), nullable=False, index=True)
+    pharmacy = relationship("Pharmacy", back_populates="contact_messages")
+
+    handled_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    handled_by = relationship("User", back_populates="handled_contact_messages", foreign_keys=[handled_by_user_id])
 
 
 class Medicine(Base):

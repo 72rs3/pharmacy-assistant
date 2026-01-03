@@ -35,7 +35,7 @@ def safe_response(pharmacy: models.Pharmacy | None, reason: str) -> str:
     contact_text = " ".join(contact_bits) if contact_bits else "Please contact the pharmacy directly."
     reason_text = f"Reason: {reason}." if reason else "Reason: medical safety."
     return (
-        "I’m not able to provide medical advice or guidance on this topic. "
+        "I'm not able to provide medical advice or guidance on this topic. "
         "Please consider speaking with a pharmacist for proper evaluation. "
         f"{reason_text} "
         f"{contact_text} "

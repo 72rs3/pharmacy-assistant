@@ -1,7 +1,7 @@
 from datetime import date, datetime
-from typing import List, Optional
+from typing import List, Optional, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, EmailStr
 
 
 # --------------------
@@ -621,3 +621,48 @@ class ChatSessionReplyIn(BaseModel):
 
 class ChatSessionMessageIn(BaseModel):
     text: str
+
+
+class ContactMessageCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    email: EmailStr
+    phone: str | None = Field(default=None, max_length=32)
+    subject: str = Field(min_length=1, max_length=64)
+    message: str = Field(min_length=1, max_length=2000)
+
+
+class ContactMessageSummary(BaseModel):
+    id: int
+    status: str
+    name: str
+    email: EmailStr
+    phone: str | None = None
+    subject: str
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ContactMessageOut(BaseModel):
+    id: int
+    status: str
+    name: str
+    email: EmailStr
+    phone: str | None = None
+    subject: str
+    message: str
+    reply_text: str | None = None
+    replied_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ContactMessageReplyIn(BaseModel):
+    reply_text: str = Field(min_length=1, max_length=2000)
+
+
+class ContactMessageStatusUpdateIn(BaseModel):
+    status: Literal["NEW", "OPEN", "CLOSED"]

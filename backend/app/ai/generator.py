@@ -53,7 +53,7 @@ async def _call_model(model: str, *, tool_context: dict, user_message: str, max_
         "You MUST answer using ONLY the TOOL_CONTEXT.\n"
         "Return STRICT JSON only. No prose. No markdown.\n"
         "Do NOT mention exact stock counts. Say available/out of stock and point to the card for details if needed.\n"
-        "If TOOL_CONTEXT has no relevant info, answer: \"I don’t know based on available pharmacy data.\".\n"
+        "If TOOL_CONTEXT has no relevant info, answer: \"I don't know based on available pharmacy data.\".\n"
         "Output schema:\n"
         "{\n"
         '  "answer": string,\n'
@@ -118,7 +118,20 @@ async def generate_answer(
         "escalated": bool(tool_context.escalated),
     }
 
-    if tool_context.intent in {"GREETING", "HOURS_CONTACT", "SERVICES", "APPOINTMENT", "CART", "RISKY_MEDICAL"}:
+    if tool_context.intent in {"GREETING", "SERVICES", "APPOINTMENT", "CART", "RISKY_MEDICAL"}:
+        return GeneratedResponse(
+            answer="",
+            language=tool_context.language,  # unused
+            confidence=1.0,
+            citations=[],
+            actions=[],
+            quick_replies=tool_context.quick_replies or [],
+            escalated=bool(tool_context.escalated),
+        )
+
+    # Let the model rephrase store hours/contact ONLY when we have real data.
+    # When missing, return empty so the caller can use a safe deterministic fallback.
+    if tool_context.intent == "HOURS_CONTACT" and not tool_context.found:
         return GeneratedResponse(
             answer="",
             language=tool_context.language,  # unused

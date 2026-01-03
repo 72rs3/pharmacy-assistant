@@ -4,6 +4,7 @@ import { useCustomerUi } from "../utils/customer-ui";
 import { useTenant } from "../context/TenantContext";
 import { isValidE164, isValidEmail } from "../utils/validation";
 import PhoneInput from "../components/ui/PhoneInput";
+import api from "../api/axios";
 
 export default function Contact() {
   const { pharmacy } = useTenant() ?? {};
@@ -18,6 +19,9 @@ export default function Contact() {
     pharmacy?.contact_email ?? "info@sunrpharmacy.com\nsupport@sunrpharmacy.com\nprescriptions@sunrpharmacy.com";
   const mapAddress = contactAddress.split("\n")[0] || "123 Health Avenue";
   const [formErrors, setFormErrors] = useState({ email: "", phone: "" });
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState("");
+  const [submitSuccess, setSubmitSuccess] = useState(false);
   const [formData, setFormData] = useState({
     name: "",
     email: "",
@@ -26,8 +30,10 @@ export default function Contact() {
     message: "",
   });
 
-  const handleSubmit = (event) => {
+  const handleSubmit = async (event) => {
     event.preventDefault();
+    setSubmitError("");
+    setSubmitSuccess(false);
     const nextErrors = { email: "", phone: "" };
     if (!isValidEmail(formData.email)) {
       nextErrors.email = "Enter a valid email address.";
@@ -40,8 +46,22 @@ export default function Contact() {
       return;
     }
     setFormErrors({ email: "", phone: "" });
-    alert("Thank you for your message! We'll get back to you soon.");
-    setFormData({ name: "", email: "", phone: "", subject: "", message: "" });
+    setIsSubmitting(true);
+    try {
+      await api.post("/contact/messages", {
+        name: formData.name,
+        email: formData.email,
+        phone: formData.phone.trim() || null,
+        subject: formData.subject,
+        message: formData.message,
+      });
+      setSubmitSuccess(true);
+      setFormData({ name: "", email: "", phone: "", subject: "", message: "" });
+    } catch (err) {
+      setSubmitError(err?.response?.data?.detail ?? "Failed to send message. Please try again.");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleChange = (event) => {
@@ -208,10 +228,21 @@ export default function Contact() {
 
             <button
               type="submit"
-              className="w-full py-3 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-primary-600)] transition-colors"
+              disabled={isSubmitting}
+              className="w-full py-3 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-primary-600)] transition-colors disabled:opacity-60"
             >
-              Send Message
+              {isSubmitting ? "Sending..." : "Send Message"}
             </button>
+            {submitSuccess ? (
+              <div className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-lg px-4 py-3">
+                Message sent. The pharmacy will get back to you soon.
+              </div>
+            ) : null}
+            {submitError ? (
+              <div className="text-sm text-red-700 bg-red-50 border border-red-100 rounded-lg px-4 py-3">
+                {submitError}
+              </div>
+            ) : null}
           </form>
         </div>
 

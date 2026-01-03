@@ -285,6 +285,9 @@ async def build_tool_context(
         if parts:
             citations.append(_playbook_citation(pharmacy, "hours_contact", ", ".join(preview_parts)))
             immediate_answer = " ".join(parts)
+        else:
+            immediate_answer = "Store hours and contact details are not available yet. Please contact the pharmacy directly."
+            citations = [_system_citation("hours_contact", "Missing pharmacy contact details")]
         ctx = ToolContext(
             intent="HOURS_CONTACT",
             language=router.language,
@@ -373,6 +376,40 @@ async def build_tool_context(
             suggestions = [m.name for m in medicine_fuzzy(db, pharmacy_id, q) if m and m.name]
             for name in suggestions:
                 actions.append(schemas.AIAction(type="search_medicine", label=f"Search {name}", payload={"query": name}))
+            if not suggestions:
+                product_exact_match = product_exact(db, pharmacy_id, q)
+                product_matches = [product_exact_match] if product_exact_match else product_sql_search(db, pharmacy_id, q)
+                if product_matches:
+                    items: list[dict[str, Any]] = []
+                    for row in product_matches[:3]:
+                        items.append(
+                            {
+                                "id": int(row.id),
+                                "name": row.name,
+                                "category": row.category,
+                                "price": float(row.price) if row.price is not None else None,
+                                "stock": int(row.stock_level or 0),
+                                "image_url": row.image_url,
+                            }
+                        )
+                    citations = [_system_citation("product_search", f"items={len(items)} suggestions=0")]
+                    ctx = ToolContext(
+                        intent="PRODUCT_SEARCH",
+                        language=router.language,
+                        found=True,
+                        items=items,
+                        suggestions=[],
+                        citations=[c.model_dump() for c in citations],
+                        snippets=[],
+                        cards=[],
+                        quick_replies=_merge_quick_replies([f"Search {it.get('name')}" for it in items if it.get("name")], _default_quick_replies()),
+                    )
+                    immediate_answer = (
+                        "I couldn't find a medicine with that name, but I did find these products: "
+                        + ", ".join(str(it.get("name")) for it in items[:3])
+                        + "."
+                    )
+                    return ctx, citations, actions, immediate_answer
         cards: list[schemas.MedicineCard] = []
         items: list[dict[str, Any]] = []
         for med in matches[:1]:
@@ -466,6 +503,38 @@ async def build_tool_context(
         suggestions: list[str] = []
         if not matches:
             suggestions = [p.name for p in product_fuzzy(db, pharmacy_id, q) if p and p.name]
+            if not suggestions:
+                med_exact_match = medicine_exact(db, pharmacy_id, q)
+                med_matches = [med_exact_match] if med_exact_match else medicine_sql_search(db, pharmacy_id, q)
+                if med_matches:
+                    actions.append(schemas.AIAction(type="search_medicine", label=f"Search {med_matches[0].name}", payload={"query": str(med_matches[0].name)}))
+                    cards = [_medicine_card(med_matches[0])]
+                    items = [
+                        {
+                            "id": int(med_matches[0].id),
+                            "name": med_matches[0].name,
+                            "dosage": med_matches[0].dosage,
+                            "rx": bool(med_matches[0].prescription_required),
+                            "price": float(med_matches[0].price) if med_matches[0].price is not None else None,
+                            "stock": int(med_matches[0].stock_level or 0),
+                            "updated_at": med_matches[0].updated_at.isoformat() if med_matches[0].updated_at else None,
+                        }
+                    ]
+                    citations = [_system_citation("medicine_search", f"match={items[0]['name']} stock={items[0]['stock']}")]
+                    ctx = ToolContext(
+                        intent="MEDICINE_SEARCH",
+                        language=router.language,
+                        found=True,
+                        items=items,
+                        suggestions=[],
+                        citations=[c.model_dump() for c in citations],
+                        snippets=[],
+                        cards=cards,
+                        quick_replies=_merge_quick_replies([f"Search {items[0]['name']}"], _default_quick_replies()),
+                        data_last_updated_at=med_matches[0].updated_at,
+                    )
+                    immediate_answer = f"I couldn't find a product with that name, but I found this medicine: {items[0]['name']}."
+                    return ctx, citations, actions, immediate_answer
         items: list[dict[str, Any]] = []
         for row in matches[:3]:
             items.append(

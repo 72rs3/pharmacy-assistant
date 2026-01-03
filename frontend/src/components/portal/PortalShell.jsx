@@ -94,7 +94,8 @@ export default function PortalShell({ children }) {
       { to: "/portal/owner/products", label: "Products", icon: ShoppingBag },
       { to: "/portal/owner/orders", label: "Orders", icon: ShoppingBag },
       { to: "/portal/owner/appointments", label: "Appointments", icon: Calendar },
-      { to: "/portal/owner/escalations", label: "Escalations", icon: MessageCircle },
+    { to: "/portal/owner/escalations", label: "Escalations", icon: MessageCircle },
+    { to: "/portal/owner/inbox", label: "Inbox", icon: Mail },
     ],
     []
   );
@@ -409,7 +410,7 @@ export default function PortalShell({ children }) {
                   type="button"
                   className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
                   title="Inbox"
-                  onClick={() => navigate("/portal/owner/escalations")}
+                  onClick={() => navigate("/portal/owner/inbox")}
                 >
                   <Mail className="w-5 h-5 text-gray-600" />
                 </button>
