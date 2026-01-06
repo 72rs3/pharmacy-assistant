@@ -45,6 +45,7 @@ class Pharmacy(Base):
     ai_logs = relationship("AILog", back_populates="pharmacy")
     chat_sessions = relationship("ChatSession", back_populates="pharmacy")
     contact_messages = relationship("ContactMessage", back_populates="pharmacy")
+    cart_items = relationship("CartItem", back_populates="pharmacy")
 
 
 class User(Base):
@@ -143,6 +144,26 @@ class Product(Base):
 
     pharmacy_id = Column(Integer, ForeignKey("pharmacies.id"), nullable=False)
     pharmacy = relationship("Pharmacy")
+
+
+class CartItem(Base):
+    __tablename__ = "cart_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(String, index=True, nullable=False)
+    pharmacy_id = Column(Integer, ForeignKey("pharmacies.id"), nullable=False)
+
+    medicine_id = Column(Integer, ForeignKey("medicines.id"), nullable=True)
+    medicine = relationship("Medicine")
+
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=True)
+    product = relationship("Product")
+
+    quantity = Column(Integer, default=1, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    pharmacy = relationship("Pharmacy", back_populates="cart_items")
 
 
 class Order(Base):

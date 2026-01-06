@@ -3,6 +3,7 @@ from __future__ import annotations
 import difflib
 from dataclasses import dataclass
 from datetime import datetime
+import re
 from typing import Any
 
 from sqlalchemy import func, or_
@@ -76,6 +77,7 @@ class ToolContext:
     escalated: bool = False
     data_last_updated_at: datetime | None = None
     indexed_at: datetime | None = None
+    multi_query: bool = False
 
 
 def _system_citation(title: str, preview: str) -> schemas.AICitation:
@@ -131,6 +133,43 @@ def _subject_tokens(text: str) -> list[str]:
             continue
         parts.append(tok)
     return parts
+
+
+_MULTI_MED_SPLIT_RE = re.compile(r"\s*(?:,|/|&|\+|\band\b|\bw\b|\bwith\b|\bplus\b)\s*", re.IGNORECASE)
+_MED_QUERY_PREFIX_RE = re.compile(
+    r"^\s*(?:do\s+you\s+have|do\s+u\s+have|do\s+we\s+have|i\s+need|need|looking\s+for|search\s+for|search|find)\s+",
+    re.IGNORECASE,
+)
+
+
+def _clean_medicine_query(raw: str) -> str:
+    text = (raw or "").strip()
+    if not text:
+        return ""
+    text = _MED_QUERY_PREFIX_RE.sub("", text).strip()
+    text = re.sub(r"[^\w\s\-/+&]", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def _split_medicine_queries(query: str, *, limit: int = 10) -> list[str]:
+    cleaned = _clean_medicine_query(query)
+    if not cleaned:
+        return []
+    parts = [p.strip() for p in _MULTI_MED_SPLIT_RE.split(cleaned) if p.strip()]
+    out: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        if not part:
+            continue
+        key = part.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(part)
+        if len(out) >= limit:
+            break
+    return out
 
 
 def medicine_sql_search(db: Session, pharmacy_id: int, query: str, *, limit: int = 3) -> list[models.Medicine]:
@@ -233,6 +272,53 @@ def _merge_quick_replies(*groups: list[str]) -> list[str]:
             seen.add(key)
             out.append(val)
     return out
+
+
+def _update_last_items_state(turns: list[dict] | None, items: list[dict[str, Any]], *, kind: str) -> None:
+    if not turns or not items:
+        return
+    recent: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in items:
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        key = f"{kind}:{name.lower()}"
+        if key in seen:
+            continue
+        seen.add(key)
+        recent.append({"name": name, "dosage": item.get("dosage") or None, "type": kind})
+        if len(recent) >= 3:
+            break
+    if recent:
+        session_memory.set_state(turns, "last_medicines", {"items": recent})
+
+
+def _update_last_search_results(turns: list[dict] | None, items: list[dict[str, Any]], *, kind: str) -> None:
+    if not turns or not items:
+        return
+    stored: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in items:
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        item_id = item.get("id")
+        key = f"{kind}:{item_id}"
+        if key in seen:
+            continue
+        seen.add(key)
+        stored.append(
+            {
+                "type": kind,
+                "id": int(item_id) if item_id is not None else None,
+                "name": name,
+            }
+        )
+        if len(stored) >= 10:
+            break
+    if stored:
+        session_memory.set_state(turns, "last_search_results", {"items": stored})
 
 
 async def build_tool_context(
@@ -358,18 +444,70 @@ async def build_tool_context(
         return ctx, citations, actions, immediate_answer
 
     if router.intent == "CART":
+        view_query = (router.query or "").strip().lower()
+        is_view = any(word in view_query for word in ["what", "list", "show", "view", "check"])
+
+        if is_view and session_id:
+            cart_items = (
+                db.query(models.CartItem)
+                .filter(models.CartItem.pharmacy_id == pharmacy_id, models.CartItem.session_id == session_id)
+                .all()
+            )
+            if cart_items:
+                parts = []
+                for item in cart_items:
+                    qty = int(item.quantity or 0)
+                    if item.medicine_id and item.medicine:
+                        parts.append(f"{item.medicine.name} (Qty: {qty})")
+                    elif item.product_id and item.product:
+                        parts.append(f"{item.product.name} (Qty: {qty})")
+                if parts:
+                    immediate_answer = "You currently have " + " and ".join(parts) + " in your cart."
+                else:
+                    immediate_answer = "Your cart is empty."
+            else:
+                immediate_answer = "Your cart is empty."
+            citations = [_system_citation("cart_view", f"items={len(cart_items)}")]
+            ctx = ToolContext(intent="CART", language=router.language, found=bool(cart_items), items=[], suggestions=[], citations=[c.model_dump() for c in citations], cards=[], quick_replies=_default_quick_replies())
+            return ctx, citations, actions, immediate_answer
+
         if turns:
-            last_item = session_memory.get_state(turns, "last_item") or {}
-            mid = int(last_item.get("medicine_id") or 0)
-            if mid > 0:
-                actions.append(schemas.AIAction(type="add_to_cart", label="Add to cart", medicine_id=mid, payload={"medicine_id": mid, "quantity": 1}))
-                citations = [_system_citation("cart", "Cart action available")]
+            last_results = session_memory.get_state(turns, "last_search_results") or {}
+            items = last_results.get("items") if isinstance(last_results, dict) else []
+            if items:
+                for item in items:
+                    item_type = str(item.get("type") or "medicine")
+                    item_id = int(item.get("id") or 0)
+                    name = str(item.get("name") or "")
+                    if not item_id:
+                        continue
+                    if item_type == "product":
+                        actions.append(
+                            schemas.AIAction(
+                                type="add_to_cart",
+                                label=f"Add {name} to cart",
+                                medicine_id=None,
+                                product_id=item_id,
+                                payload={"product_id": item_id, "quantity": 1},
+                            )
+                        )
+                    else:
+                        actions.append(
+                            schemas.AIAction(
+                                type="add_to_cart",
+                                label=f"Add {name} to cart",
+                                medicine_id=item_id,
+                                payload={"medicine_id": item_id, "quantity": 1},
+                            )
+                        )
+                citations = [_system_citation("cart", "Cart actions from last search results")]
                 ctx = ToolContext(intent="CART", language=router.language, found=True, items=[], suggestions=[], citations=[c.model_dump() for c in citations], cards=[], quick_replies=_default_quick_replies())
-                immediate_answer = "Ready to add it to your cart."
+                immediate_answer = "Ready to add those to your cart."
                 return ctx, citations, actions, immediate_answer
+
         citations = [_system_citation("cart", "Missing context")]
         ctx = ToolContext(intent="CART", language=router.language, found=False, items=[], suggestions=[], citations=[c.model_dump() for c in citations], cards=[], quick_replies=_default_quick_replies())
-        immediate_answer = "Which medicine should I add to your cart?"
+        immediate_answer = "Which medicine or product should I add to your cart?"
         return ctx, citations, actions, immediate_answer
 
     if router.intent == "RISKY_MEDICAL":
@@ -389,52 +527,54 @@ async def build_tool_context(
 
     if router.intent == "MEDICINE_SEARCH":
         q = (router.query or "").strip() or ""
-        exact = medicine_exact(db, pharmacy_id, q)
-        matches = [exact] if exact else medicine_sql_search(db, pharmacy_id, q)
-        suggestions: list[str] = []
-        if not matches:
-            suggestions = [m.name for m in medicine_fuzzy(db, pharmacy_id, q) if m and m.name]
-            for name in suggestions:
-                actions.append(schemas.AIAction(type="search_medicine", label=f"Search {name}", payload={"query": name}))
-            if not suggestions:
-                product_exact_match = product_exact(db, pharmacy_id, q)
-                product_matches = [product_exact_match] if product_exact_match else product_sql_search(db, pharmacy_id, q)
-                if product_matches:
-                    items: list[dict[str, Any]] = []
-                    for row in product_matches[:3]:
-                        items.append(
-                            {
-                                "id": int(row.id),
-                                "name": row.name,
-                                "category": row.category,
-                                "price": float(row.price) if row.price is not None else None,
-                                "stock": int(row.stock_level or 0),
-                                "image_url": row.image_url,
-                            }
-                        )
-                    citations = [_system_citation("product_search", f"items={len(items)} suggestions=0")]
-                    ctx = ToolContext(
-                        intent="PRODUCT_SEARCH",
-                        language=router.language,
-                        found=True,
-                        items=items,
-                        suggestions=[],
-                        citations=[c.model_dump() for c in citations],
-                        snippets=[],
-                        cards=[],
-                        quick_replies=_merge_quick_replies([f"Search {it.get('name')}" for it in items if it.get("name")], _default_quick_replies()),
-                    )
-                    immediate_answer = (
-                        "I couldn't find a medicine with that name, but I did find these products: "
-                        + ", ".join(str(it.get("name")) for it in items[:3])
-                        + "."
-                    )
-                    return ctx, citations, actions, immediate_answer
+        tokens = _subject_tokens(q)
+        found_medicines: list[models.Medicine] = []
+        found_products: list[models.Product] = []
+
+        if not tokens:
+            found_medicines = medicine_sql_search(db, pharmacy_id, q, limit=5)
+        else:
+            for token in tokens:
+                med_found = medicine_sql_search(db, pharmacy_id, token, limit=5)
+                if not med_found:
+                    med_found = medicine_fuzzy(db, pharmacy_id, token, limit=3)
+                if med_found:
+                    found_medicines.extend(med_found)
+                    continue
+                prod_found = product_sql_search(db, pharmacy_id, token, limit=5)
+                if not prod_found:
+                    prod_found = product_fuzzy(db, pharmacy_id, token, limit=3)
+                found_products.extend(prod_found)
+
+        seen_med_ids: set[int] = set()
+        unique_meds: list[models.Medicine] = []
+        for med in found_medicines:
+            if not med:
+                continue
+            med_id = int(med.id)
+            if med_id in seen_med_ids:
+                continue
+            seen_med_ids.add(med_id)
+            unique_meds.append(med)
+        unique_meds = unique_meds[:6]
+
+        seen_prod_ids: set[int] = set()
+        unique_products: list[models.Product] = []
+        for prod in found_products:
+            if not prod:
+                continue
+            prod_id = int(prod.id)
+            if prod_id in seen_prod_ids:
+                continue
+            seen_prod_ids.add(prod_id)
+            unique_products.append(prod)
+        unique_products = unique_products[:6]
+
         cards: list[schemas.MedicineCard] = []
-        items: list[dict[str, Any]] = []
-        for med in matches[:1]:
+        medicine_items: list[dict[str, Any]] = []
+        for med in unique_meds:
             cards.append(_medicine_card(med))
-            items.append(
+            medicine_items.append(
                 {
                     "id": int(med.id),
                     "name": med.name,
@@ -443,63 +583,89 @@ async def build_tool_context(
                     "price": float(med.price) if med.price is not None else None,
                     "stock": int(med.stock_level or 0),
                     "updated_at": med.updated_at.isoformat() if med.updated_at else None,
+                    "type": "medicine",
                 }
             )
-        found = bool(items)
-        if found:
-            item = items[0]
+
+        product_items: list[dict[str, Any]] = []
+        for prod in unique_products:
+            product_items.append(
+                {
+                    "id": int(prod.id),
+                    "name": prod.name,
+                    "category": prod.category,
+                    "price": float(prod.price) if prod.price is not None else None,
+                    "stock": int(prod.stock_level or 0),
+                    "image_url": prod.image_url,
+                    "rx": False,
+                    "dosage": None,
+                    "type": "product",
+                }
+            )
+
+        items: list[dict[str, Any]] = medicine_items + product_items
+        suggestions: list[str] = []
+
+        for item in medicine_items:
+            stock = int(item.get("stock") or 0)
+            rx = bool(item.get("rx") or False)
             mid = int(item["id"])
             name = str(item["name"])
-            stock = int(item.get("stock") or 0)
-            price = item.get("price")
-            rx = bool(item.get("rx") or False)
-            price_text = f" Price: {float(price):.2f}." if price is not None else ""
             if rx:
                 actions.append(
                     schemas.AIAction(
                         type="upload_prescription",
-                        label="Upload prescription",
+                        label=f"Rx for {name}",
                         medicine_id=mid,
                         payload={"medicine_id": mid},
                     )
-                )
-                immediate_answer = (
-                    f"Yes, we have {name} available. See the details card below. "
-                    f"This medicine requires a prescription.{price_text} Would you like to upload your prescription?"
                 )
             elif stock > 0:
                 actions.append(
                     schemas.AIAction(
                         type="add_to_cart",
-                        label="Add to cart",
+                        label=f"Add {name}",
                         medicine_id=mid,
                         payload={"medicine_id": mid, "quantity": 1},
                     )
                 )
-                immediate_answer = (
-                    f"Yes, we have {name} available. See the details card below."
-                    f"{price_text} Would you like me to add it to your cart?"
+
+        for item in product_items:
+            stock = int(item.get("stock") or 0)
+            if stock <= 0:
+                continue
+            pid = int(item["id"])
+            name = str(item["name"])
+            actions.append(
+                schemas.AIAction(
+                    type="add_to_cart",
+                    label=f"Add {name}",
+                    medicine_id=None,
+                    product_id=pid,
+                    payload={"product_id": pid, "quantity": 1},
                 )
-            else:
-                immediate_answer = (
-                    f"Sorry, {name} is currently out of stock.{price_text} "
-                    "See the details card below. Do you want to search another medicine?"
+            )
+
+        found = bool(items)
+        immediate_answer = None
+        if turns is not None and found:
+            if medicine_items:
+                session_memory.set_state(
+                    turns,
+                    "last_item",
+                    {"medicine_id": int(medicine_items[0]["id"]), "name": str(medicine_items[0]["name"])},
                 )
-        elif suggestions:
-            immediate_answer = "I could not find an exact match. Did you mean: " + ", ".join(suggestions[:3]) + "?"
-        else:
-            immediate_answer = "Which medicine are you looking for? Please share the name (and dosage, if possible)."
-        if getattr(router, "greeting", False) and immediate_answer:
-            immediate_answer = _greeting_prefix(router.language) + immediate_answer
-        if turns is not None and found and items:
-            session_memory.set_state(turns, "last_item", {"medicine_id": int(items[0]["id"]), "name": str(items[0]["name"])})
+                _update_last_items_state(turns, medicine_items, kind="medicine")
+                _update_last_search_results(turns, medicine_items, kind="medicine")
+            if product_items:
+                _update_last_search_results(turns, product_items, kind="product")
             if session_id:
                 session_memory.save_turns(db, pharmacy_id, session_id, turns)
 
         citations = [
             _system_citation(
                 "medicine_search",
-                (f"match={items[0]['name']} stock={items[0]['stock']}" if found and items else f"suggestions={','.join(suggestions[:3])}"),
+                (f"medicines={len(medicine_items)} products={len(product_items)}" if found else "no matches"),
             )
         ]
         ctx = ToolContext(
@@ -512,7 +678,7 @@ async def build_tool_context(
             snippets=[],
             cards=cards,
             quick_replies=_merge_quick_replies(suggestions, _default_quick_replies()),
-            data_last_updated_at=(matches[0].updated_at if matches else None),
+            data_last_updated_at=(unique_meds[0].updated_at if unique_meds else None),
         )
         return ctx, citations, actions, immediate_answer
 
@@ -579,6 +745,19 @@ async def build_tool_context(
             cards=[],
             quick_replies=_merge_quick_replies(suggestions, _default_quick_replies()),
         )
+        for item in items:
+            stock = int(item.get("stock") or 0)
+            if stock <= 0:
+                continue
+            actions.append(
+                schemas.AIAction(
+                    type="add_to_cart",
+                    label=f"Add {item['name']} to cart",
+                    medicine_id=None,
+                    product_id=int(item["id"]),
+                    payload={"product_id": int(item["id"]), "quantity": 1},
+                )
+            )
         if items:
             if len(items) == 1:
                 stock = int(items[0].get("stock") or 0)
@@ -592,6 +771,11 @@ async def build_tool_context(
             immediate_answer = "I could not find an exact match. Did you mean: " + ", ".join(suggestions[:3]) + "?"
         else:
             immediate_answer = "Which product are you looking for? Please share the name."
+        if turns is not None and items:
+            _update_last_items_state(turns, items, kind="product")
+            _update_last_search_results(turns, items, kind="product")
+            if session_id:
+                session_memory.save_turns(db, pharmacy_id, session_id, turns)
         return ctx, citations, actions, immediate_answer
 
     if router.intent == "UNKNOWN":

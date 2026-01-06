@@ -1091,13 +1091,27 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
                           }
                           if (action.type === "add_to_cart") {
                             const medicineId = Number(action.medicine_id ?? action.payload?.medicine_id ?? 0);
-                            if (!medicineId) {
+                            const productId = Number(action.payload?.product_id ?? 0);
+                            if (!medicineId && !productId) {
                               setMessages((prev) => [
                                 ...prev,
                                 {
                                   id: `bot-action-${Date.now()}`,
                                   senderType: "AI",
-                                  text: "I couldn't identify the medicine to add. Please try again.",
+                                  text: "I couldn't identify the item to add. Please try again.",
+                                  timestamp: new Date(),
+                                  allowPrescriptionUpload: false,
+                                },
+                              ]);
+                              return;
+                            }
+                            if (!sessionId) {
+                              setMessages((prev) => [
+                                ...prev,
+                                {
+                                  id: `bot-action-${Date.now()}`,
+                                  senderType: "AI",
+                                  text: "I couldn't start a cart without a session. Please refresh and try again.",
                                   timestamp: new Date(),
                                   allowPrescriptionUpload: false,
                                 },
@@ -1120,13 +1134,15 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
                             }
                             try {
                               const res = await api.post(`/pharmacies/${resolvedPharmacyId}/cart/items`, {
-                                medicine_id: medicineId,
+                                session_id: sessionId,
+                                medicine_id: medicineId || undefined,
+                                product_id: productId || undefined,
                                 quantity: Number(action.payload?.quantity ?? 1),
                               });
                               const item = res.data ?? {};
                               addItem({
-                                item_type: "medicine",
-                                item_id: item.medicine_id,
+                                item_type: item.item_type ?? (medicineId ? "medicine" : "product"),
+                                item_id: item.item_id ?? item.medicine_id ?? item.product_id ?? medicineId ?? productId,
                                 name: item.name,
                                 price: item.price,
                               });

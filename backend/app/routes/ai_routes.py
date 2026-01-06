@@ -78,6 +78,16 @@ _SEARCH_AGAIN_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"^\s*antibiotic(s)?\b.*$", re.IGNORECASE),
 ]
 
+_LAST_MEDICINES_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(r"\b(what|which)\b.*\b(medicine|medicines|meds)\b.*\b(asked|requested|mentioned|searched|looking)\b", re.IGNORECASE),
+    re.compile(r"\bwhat\s+did\s+i\s+ask\s+for\b", re.IGNORECASE),
+    re.compile(r"\bwhat\s+meds\s+did\s+i\s+ask\s+for\b", re.IGNORECASE),
+    re.compile(r"\bwhat\s+medicines\s+did\s+i\s+ask\s+for\b", re.IGNORECASE),
+    re.compile(r"\bwhat\s+did\s+i\s+(just\s+)?look\s+at\b", re.IGNORECASE),
+    re.compile(r"\bwhat\s+did\s+i\s+(just\s+)?view\b", re.IGNORECASE),
+    re.compile(r"\bwhat\s+did\s+i\s+(just\s+)?check\b", re.IGNORECASE),
+]
+
 _MSK_PAIN_PATTERN = re.compile(
     r"\b("
     r"(hand|arm|leg|knee|ankle|foot|feet|hip|shoulder|back|wrist|elbow|neck)"
@@ -363,6 +373,91 @@ def _maybe_handle_search_again(
         confidence_score=interaction.confidence_score,
         escalated_to_human=False,
         intent="MEDICINE_SEARCH_PROMPT",
+        created_at=interaction.created_at,
+        data_last_updated_at=None,
+        indexed_at=None,
+        system_message=None,
+    )
+
+
+def _maybe_handle_last_medicines(
+    db: Session,
+    pharmacy_id: int,
+    customer_id: str,
+    session: models.ChatSession,
+    user_text: str,
+):
+    msg = (user_text or "").strip()
+    if not msg:
+        return None
+    if not any(p.search(msg) for p in _LAST_MEDICINES_PATTERNS):
+        return None
+
+    turns = session_memory.load_turns(db, pharmacy_id, session.session_id)
+    state = session_memory.get_state(turns, "last_search_results") or {}
+    items = state.get("items") if isinstance(state, dict) else None
+    if not items:
+        state = session_memory.get_state(turns, "last_medicines") or {}
+        items = state.get("items") if isinstance(state, dict) else None
+
+    if not items:
+        answer = "I don't have any recent medicine searches yet. Tell me the medicine name(s) you want."
+        quick_replies = ["Search another medicine", "Shop OTC products", "Book appointment", "Contact pharmacy"]
+    else:
+        lines: list[str] = []
+        for item in items:
+            name = str(item.get("name") or "").strip()
+            if not name:
+                continue
+            dosage = item.get("dosage")
+            entry_type = str(item.get("type") or "medicine").lower()
+            suffix = " (product)" if entry_type == "product" else ""
+            if dosage:
+                lines.append(f"- {name} ({dosage}){suffix}")
+            else:
+                lines.append(f"- {name}{suffix}")
+        answer = "You asked about:\n" + "\n".join(lines) if lines else "I don't have any recent medicine searches yet."
+        quick_replies = ["Search another medicine", "Shop OTC products", "Book appointment", "Contact pharmacy"]
+
+    interaction = models.AIInteraction(
+        customer_id=customer_id,
+        customer_query=msg,
+        ai_response=answer,
+        confidence_score=0.0,
+        escalated_to_human=False,
+        created_at=datetime.utcnow(),
+        pharmacy_id=pharmacy_id,
+    )
+    db.add(interaction)
+    db.commit()
+    db.refresh(interaction)
+    add_message(
+        db,
+        session,
+        "AI",
+        answer,
+        _build_ai_metadata(
+            intent="MEDICINE_HISTORY",
+            actions=[],
+            cards=[],
+            quick_replies=quick_replies,
+            data_last_updated_at=None,
+            indexed_at=None,
+        ),
+    )
+    db.commit()
+    return schemas.AIChatOut(
+        interaction_id=interaction.id,
+        customer_id=customer_id,
+        session_id=session.session_id,
+        answer=answer,
+        citations=[],
+        cards=[],
+        actions=[],
+        quick_replies=quick_replies,
+        confidence_score=interaction.confidence_score,
+        escalated_to_human=False,
+        intent="MEDICINE_HISTORY",
         created_at=interaction.created_at,
         data_last_updated_at=None,
         indexed_at=None,
@@ -1279,7 +1374,11 @@ def _enforce_action_policy(tool_ctx: object, actions: list[schemas.AIAction]) ->
             return int(action.medicine_id)
         payload = action.payload or {}
         try:
-            return int(payload.get("medicine_id")) if payload.get("medicine_id") is not None else None
+            if payload.get("medicine_id") is not None:
+                return int(payload.get("medicine_id"))
+            if payload.get("product_id") is not None:
+                return -int(payload.get("product_id"))
+            return None
         except Exception:
             return None
 
@@ -1415,6 +1514,10 @@ async def chat(
         if triage is not None:
             session_memory.append_turns(db, pharmacy_id, session_id, message, triage.answer)
             return triage
+        triage = _maybe_handle_last_medicines(db, pharmacy_id, customer_id, session, message)
+        if triage is not None:
+            session_memory.append_turns(db, pharmacy_id, session_id, message, triage.answer)
+            return triage
         triage = _maybe_handle_search_again(db, pharmacy_id, customer_id, session, message)
         if triage is not None:
             session_memory.append_turns(db, pharmacy_id, session_id, message, triage.answer)
@@ -1518,7 +1621,10 @@ async def chat(
             router_confidence=float(router.confidence or 0.0),
         )
         answer = (gen.answer or "").strip()
-        if immediate_answer and (not answer or answer.lower().startswith("assistant temporarily unavailable")):
+        multi_medicine = bool(getattr(tool_ctx, "multi_query", False))
+        if multi_medicine and immediate_answer:
+            answer = immediate_answer
+        elif immediate_answer and (not answer or answer.lower().startswith("assistant temporarily unavailable")):
             answer = immediate_answer
         elif not answer:
             answer = immediate_answer or ""
@@ -1528,17 +1634,29 @@ async def chat(
                 "If symptoms are severe or urgent, seek medical care immediately."
             )
             actions = [schemas.AIAction(type="escalate_to_pharmacist", label="Talk to pharmacist")]
-        # Keep existing action list from tools unless generator provided actions.
-        if gen.actions:
+        tool_actions = actions or []
+        # Prefer tool actions; only use generator actions when tool actions are empty.
+        if gen.actions and not multi_medicine and not tool_actions:
             actions = [
                 schemas.AIAction(
                     type=a.type,
                     label=a.label,
-                    medicine_id=(int(a.payload.get("medicine_id")) if isinstance(a.payload, dict) and a.payload.get("medicine_id") else None),
+                    medicine_id=(
+                        int(a.payload.get("medicine_id"))
+                        if isinstance(a.payload, dict) and a.payload.get("medicine_id") is not None
+                        else None
+                    ),
+                    product_id=(
+                        int(a.payload.get("product_id"))
+                        if isinstance(a.payload, dict) and a.payload.get("product_id") is not None
+                        else None
+                    ),
                     payload=a.payload,
                 )
                 for a in gen.actions
             ]
+        else:
+            actions = tool_actions
         actions = _enforce_action_policy(tool_ctx, actions or [])
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
@@ -1556,6 +1674,7 @@ async def chat(
     )
     db.add(interaction)
     db.flush()
+    quick_replies_source = tool_ctx.quick_replies or [] if multi_medicine else (gen.quick_replies or tool_ctx.quick_replies or [])
     add_message(
         db,
         session,
@@ -1565,7 +1684,7 @@ async def chat(
             intent=tool_ctx.intent,
             actions=actions,
             cards=tool_ctx.cards or [],
-            quick_replies=_filter_quick_replies(actions, (gen.quick_replies or tool_ctx.quick_replies or [])),
+            quick_replies=_filter_quick_replies(actions, quick_replies_source),
             data_last_updated_at=tool_ctx.data_last_updated_at,
             indexed_at=tool_ctx.indexed_at,
         ),

@@ -14,11 +14,31 @@ _RISK_PATTERNS = [
     (r"\b(chest pain|shortness of breath|seizure|unconscious|bleeding|overdose)\b", "severe condition"),
 ]
 
+_SAFE_PRODUCTS = [
+    "baby wipes",
+    "baby wipe",
+    "baby powder",
+    "baby soap",
+    "baby shampoo",
+    "baby lotion",
+    "baby oil",
+    "baby formula",
+    "baby food",
+    "diapers",
+    "nappy",
+    "sudocrem",
+]
+
 
 def detect_risk(text: str) -> tuple[bool, str]:
     msg = (text or "").lower()
+    sanitized = msg
+    for product in _SAFE_PRODUCTS:
+        escaped = re.escape(product)
+        sanitized = re.sub(rf"\b{escaped}\b", "safe_product_placeholder", sanitized, flags=re.IGNORECASE)
+
     for pattern, reason in _RISK_PATTERNS:
-        if re.search(pattern, msg):
+        if re.search(pattern, sanitized):
             return True, reason
     return False, ""
 

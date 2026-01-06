@@ -546,6 +546,7 @@ class AIAction(BaseModel):
     type: str  # add_to_cart | upload_prescription | request_notify
     label: str | None = None
     medicine_id: int | None = None
+    product_id: int | None = None
     payload: dict | None = None
 
 
