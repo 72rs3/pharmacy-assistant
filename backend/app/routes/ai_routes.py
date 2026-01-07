@@ -1402,26 +1402,16 @@ def _enforce_action_policy(tool_ctx: object, actions: list[schemas.AIAction]) ->
                         type="add_to_cart",
                         label=a.label or "Add to cart",
                         medicine_id=med_id,
-                        payload={"medicine_id": med_id, "quantity": 1},
+                        payload={
+                            "medicine_id": med_id,
+                            "quantity": 1,
+                            "requires_prescription": bool(rx),
+                        },
                     )
                 )
             else:
                 out.append(a)
         return out
-
-    if rx is True:
-        filtered = [a for a in actions if a.type != "add_to_cart"]
-        if not any(a.type == "upload_prescription" for a in filtered):
-            if med_id:
-                filtered.append(
-                    schemas.AIAction(
-                        type="upload_prescription",
-                        label="Upload prescription",
-                        medicine_id=med_id,
-                        payload={"medicine_id": med_id},
-                    )
-                )
-        return dedupe(filtered)
 
     if stock is not None and stock <= 0:
         return dedupe([a for a in actions if a.type != "add_to_cart"])
@@ -1432,7 +1422,7 @@ def _enforce_action_policy(tool_ctx: object, actions: list[schemas.AIAction]) ->
                 type="add_to_cart",
                 label="Add to cart",
                 medicine_id=med_id,
-                payload={"medicine_id": med_id, "quantity": 1},
+                payload={"medicine_id": med_id, "quantity": 1, "requires_prescription": bool(rx)},
             )
         ]
     return dedupe(ensure_add_to_cart_ids(actions))

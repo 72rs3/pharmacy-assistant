@@ -611,22 +611,17 @@ async def build_tool_context(
             rx = bool(item.get("rx") or False)
             mid = int(item["id"])
             name = str(item["name"])
-            if rx:
-                actions.append(
-                    schemas.AIAction(
-                        type="upload_prescription",
-                        label=f"Rx for {name}",
-                        medicine_id=mid,
-                        payload={"medicine_id": mid},
-                    )
-                )
-            elif stock > 0:
+            if stock > 0:
                 actions.append(
                     schemas.AIAction(
                         type="add_to_cart",
                         label=f"Add {name}",
                         medicine_id=mid,
-                        payload={"medicine_id": mid, "quantity": 1},
+                        payload={
+                            "medicine_id": mid,
+                            "quantity": 1,
+                            "requires_prescription": rx,
+                        },
                     )
                 )
 

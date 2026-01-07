@@ -295,15 +295,15 @@ def _build_medicine_response(
     if rx:
         actions.append(
             schemas.AIAction(
-                type="upload_prescription",
-                label="Upload prescription",
+                type="add_to_cart",
+                label="Add to cart",
                 medicine_id=int(medicine.id),
-                payload={"medicine_id": int(medicine.id)},
+                payload={"medicine_id": int(medicine.id), "quantity": 1, "requires_prescription": True},
             )
         )
         answer = (
             f"Yes, we have {medicine.name} available. See the details card below. "
-            "This medicine requires a prescription. Would you like to upload your prescription?"
+            "This medicine requires a prescription, which you'll upload at checkout."
         )
     else:
         if stock > 0:

@@ -19,6 +19,17 @@ const getOrCreateCustomerTrackingCode = () => {
   return generated;
 };
 
+const readDraftPrescriptionTokens = () => {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem("customer_prescription_draft_tokens");
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+};
+
 export default function CustomerCartDrawer({ isOpen, onClose }) {
   const { items, totalItems, totalPrice, updateItemQuantity, removeItem, clearCart } = useCustomerCart();
   const { pharmacy } = useTenant() ?? {};
@@ -37,6 +48,12 @@ export default function CustomerCartDrawer({ isOpen, onClose }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [result, setResult] = useState(null);
   const [copied, setCopied] = useState(false);
+  const [rxUploadState, setRxUploadState] = useState({
+    files: [],
+    status: "",
+    error: "",
+    tokens: [],
+  });
 
   useEffect(() => {
     if (items.length === 0) {
@@ -48,6 +65,12 @@ export default function CustomerCartDrawer({ isOpen, onClose }) {
     }
   }, [items.length]);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const tokens = readDraftPrescriptionTokens();
+    setRxUploadState((prev) => ({ ...prev, tokens }));
+  }, [isOpen]);
+
   const hasInvalidItems = useMemo(() => {
     if (items.length === 0) return false;
     return items.some((item) => {
@@ -58,20 +81,64 @@ export default function CustomerCartDrawer({ isOpen, onClose }) {
     });
   }, [items]);
 
+  const hasRxItems = useMemo(
+    () => items.some((item) => Boolean(item.requires_prescription)),
+    [items]
+  );
+
+  const requiresPrescriptionUpload = hasRxItems && rxUploadState.tokens.length === 0;
+
   const canSubmit = useMemo(() => {
     if (!form.customer_name.trim()) return false;
     if (!form.customer_phone.trim()) return false;
     if (!isValidE164(form.customer_phone)) return false;
     if (!form.customer_address.trim()) return false;
     if (items.length === 0) return false;
+    if (requiresPrescriptionUpload) return false;
     return !hasInvalidItems;
-  }, [form, items, hasInvalidItems]);
+  }, [form, items, hasInvalidItems, requiresPrescriptionUpload]);
 
   const handleChange = (event) => {
     const { name, value } = event.target;
     setForm((prev) => ({ ...prev, [name]: value }));
     if (name === "customer_phone" && phoneError) {
       setPhoneError("");
+    }
+  };
+
+  const handlePrescriptionUpload = async (event) => {
+    event.preventDefault();
+    setRxUploadState((prev) => ({ ...prev, status: "", error: "" }));
+    if (!rxUploadState.files || rxUploadState.files.length === 0) {
+      setRxUploadState((prev) => ({ ...prev, error: "Select one or more files (images or PDF)." }));
+      return;
+    }
+
+    const formData = new FormData();
+    rxUploadState.files.forEach((file) => {
+      formData.append("files", file);
+    });
+
+    try {
+      const res = await api.post("/prescriptions/draft", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      const items = Array.isArray(res.data) ? res.data : [];
+      const tokens = items.map((item) => item?.draft_token).filter(Boolean);
+      if (typeof window !== "undefined" && tokens.length > 0) {
+        localStorage.setItem("customer_prescription_draft_tokens", JSON.stringify(tokens));
+      }
+      setRxUploadState((prev) => ({
+        ...prev,
+        status: `Uploaded ${items.length || rxUploadState.files.length} file(s).`,
+        error: "",
+        tokens,
+      }));
+    } catch (err) {
+      setRxUploadState((prev) => ({
+        ...prev,
+        error: err?.response?.data?.detail ?? "Upload failed.",
+      }));
     }
   };
 
@@ -85,16 +152,7 @@ export default function CustomerCartDrawer({ isOpen, onClose }) {
     setIsSubmitting(true);
     setResult(null);
     try {
-      let draftPrescriptionTokens = [];
-      if (typeof window !== "undefined") {
-        try {
-          const raw = localStorage.getItem("customer_prescription_draft_tokens");
-          const parsed = raw ? JSON.parse(raw) : [];
-          draftPrescriptionTokens = Array.isArray(parsed) ? parsed.filter(Boolean) : [];
-        } catch {
-          draftPrescriptionTokens = [];
-        }
-      }
+      const draftPrescriptionTokens = readDraftPrescriptionTokens();
       const payload = {
         customer_name: form.customer_name.trim(),
         customer_phone: form.customer_phone.trim(),
@@ -164,15 +222,22 @@ export default function CustomerCartDrawer({ isOpen, onClose }) {
 
   return (
     <div className="fixed inset-0 z-50 flex">
-      <button type="button" className="flex-1 bg-black/40" onClick={onClose} aria-label="Close cart overlay" />
+      <button
+        type="button"
+        className="flex-1 bg-black/50 backdrop-blur-[2px]"
+        onClick={onClose}
+        aria-label="Close cart overlay"
+      />
       <aside
-        className={`w-full max-w-md h-full flex flex-col ${
-          isNeumorph ? "bg-slate-100 border-l border-slate-200" : "bg-white/90 border-l border-white/70"
-        } ${isGlass ? "backdrop-blur-xl" : ""} shadow-2xl`}
+        className={`w-full max-w-md h-full flex flex-col overflow-hidden ${
+          isNeumorph ? "bg-slate-100 border-l border-slate-200" : "bg-white/95 border-l border-white/70"
+        } ${isGlass ? "backdrop-blur-2xl" : ""} shadow-2xl sm:rounded-l-3xl`}
       >
         <div
           className={`px-6 py-5 border-b ${
-            isNeumorph ? "border-slate-200 bg-slate-100" : "border-slate-200/70 bg-white/80"
+            isNeumorph
+              ? "border-slate-200 bg-slate-100"
+              : "border-slate-200/70 bg-gradient-to-br from-white to-slate-50"
           } ${isGlass ? "backdrop-blur" : ""} flex items-center justify-between`}
         >
           <div>
@@ -182,14 +247,14 @@ export default function CustomerCartDrawer({ isOpen, onClose }) {
           <button
             type="button"
             onClick={onClose}
-            className="p-2 rounded-full hover:bg-slate-100 transition-colors"
+            className="p-2 rounded-full hover:bg-slate-100/80 transition-colors"
             aria-label="Close cart"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
+        <div className="flex-1 overflow-y-auto px-6 py-6 space-y-6 bg-slate-50/40">
           <div className="flex items-center justify-between text-xs uppercase tracking-wide text-gray-500">
             <span>Items</span>
             {items.length > 0 ? (
@@ -217,20 +282,27 @@ export default function CustomerCartDrawer({ isOpen, onClose }) {
                     ? "border border-slate-200 bg-white shadow-none"
                     : "border border-slate-200/70 bg-white/80 shadow-sm";
               return (
-                <div key={item.id} className={`flex gap-4 items-center rounded-2xl p-3 ${itemCardClass}`}>
-                  <div className="w-16 h-16 rounded-xl bg-gray-100 overflow-hidden flex-shrink-0 border border-slate-100">
+                <div key={item.id} className={`flex gap-4 items-center rounded-3xl p-4 ${itemCardClass}`}>
+                  <div className="w-16 h-16 rounded-2xl bg-white/90 overflow-hidden flex-shrink-0 border border-slate-200/70">
                     {item.image ? (
                       <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
                     ) : null}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="text-gray-900 text-sm font-medium truncate">{item.name}</div>
+                    <div className="flex items-center gap-2">
+                      <div className="text-gray-900 text-sm font-semibold truncate">{item.name}</div>
+                      {item.requires_prescription ? (
+                        <span className="text-[10px] uppercase tracking-widest bg-amber-100 text-amber-900 px-2 py-0.5 rounded-full">
+                          Rx
+                        </span>
+                      ) : null}
+                    </div>
                     <div className="text-xs text-gray-500">{formatMoney(price)}</div>
-                    <div className="mt-3 flex items-center gap-2">
+                    <div className="mt-3 inline-flex items-center gap-2 rounded-full bg-slate-100 px-2 py-1">
                       <button
                         type="button"
                         onClick={() => updateItemQuantity(item.id, qty - 1)}
-                        className="w-8 h-8 rounded-full border border-slate-200 text-gray-700 hover:bg-slate-100"
+                        className="w-7 h-7 rounded-full border border-slate-200 text-gray-700 hover:bg-white"
                         aria-label="Decrease quantity"
                       >
                         -
@@ -239,7 +311,7 @@ export default function CustomerCartDrawer({ isOpen, onClose }) {
                       <button
                         type="button"
                         onClick={() => updateItemQuantity(item.id, qty + 1)}
-                        className="w-8 h-8 rounded-full border border-slate-200 text-gray-700 hover:bg-slate-100"
+                        className="w-7 h-7 rounded-full border border-slate-200 text-gray-700 hover:bg-white"
                         aria-label="Increase quantity"
                       >
                         +
@@ -261,10 +333,10 @@ export default function CustomerCartDrawer({ isOpen, onClose }) {
             })
           )}
           {items.length > 0 ? (
-            <div className="rounded-2xl border border-slate-200/70 bg-white/90 p-4 shadow-sm">
-              <div className="flex items-center justify-between text-sm text-gray-600">
+            <div className="rounded-3xl border border-slate-200/70 bg-gradient-to-r from-[var(--brand-primary)] to-[var(--brand-primary-600)] p-4 text-white shadow-sm">
+              <div className="flex items-center justify-between text-xs uppercase tracking-wide text-white/80">
                 <span>Order total</span>
-                <span className="text-lg font-semibold text-gray-900">{formatMoney(totalPrice)}</span>
+                <span className="text-lg font-semibold text-white">{formatMoney(totalPrice)}</span>
               </div>
             </div>
           ) : null}
@@ -272,131 +344,167 @@ export default function CustomerCartDrawer({ isOpen, onClose }) {
             <button
               type="button"
               onClick={() => setShowCheckout(true)}
-              className="w-full py-3 bg-[var(--brand-accent)] text-white rounded-xl hover:opacity-95 transition-colors font-semibold"
+              className="w-full py-3 bg-[var(--brand-accent)] text-white rounded-full hover:opacity-95 transition-colors font-semibold shadow-sm"
             >
               Continue to checkout
             </button>
           ) : null}
-        </div>
 
-        {showCheckout ? (
-          <div
-            className={`border-t p-6 space-y-4 ${
-              isNeumorph ? "border-slate-200 bg-slate-100" : "border-slate-200/70 bg-white/80"
-            } ${isGlass ? "backdrop-blur" : ""}`}
-          >
-            <div className="rounded-2xl border border-amber-200/70 bg-amber-50 px-4 py-3 text-xs text-amber-900 flex items-start gap-2">
-              <BadgeCheck className="w-4 h-4 text-amber-700 mt-0.5" />
-              <div>
-                <div className="font-semibold">Cash on delivery</div>
-                <div className="text-amber-800">A pharmacist will confirm your order by phone.</div>
-              </div>
-            </div>
-            {hasInvalidItems ? (
-              <div className="text-sm text-red-600">
-                Some items cannot be ordered online. Please remove them and try again.
-              </div>
-            ) : null}
-            {result?.error ? <div className="text-sm text-red-600">{result.error}</div> : null}
-            {result?.tracking_code ? (
-              <div className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg p-3">
-                <div className="text-xs text-green-800 uppercase tracking-wide">Tracking code</div>
-                <div className="mt-2 flex items-center gap-2">
-                  <code className="flex-1 px-3 py-2 rounded-lg border border-green-200 bg-white text-green-900 break-all">
-                    {result.tracking_code}
-                  </code>
-                  <button
-                    type="button"
-                    onClick={() => handleCopyTrackingCode(result.tracking_code)}
-                    className="px-3 py-2 rounded-lg border border-green-200 text-green-800 hover:bg-green-100 text-xs font-semibold"
-                  >
-                    {copied ? "Copied" : "Copy"}
-                  </button>
-                </div>
-                <div className="mt-2">
-                  <Link to="/orders" className="underline text-green-800 hover:text-green-900">
-                    Track this order
-                  </Link>
-                </div>
-              </div>
-            ) : null}
-            <form onSubmit={handleSubmit} className="space-y-3">
-              <div>
-                <label htmlFor="customer_name" className="block text-xs text-gray-600 mb-1">
-                  Full name *
-                </label>
-                <input
-                  id="customer_name"
-                  name="customer_name"
-                  value={form.customer_name}
-                  onChange={handleChange}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-primary)] bg-white/90"
-                  placeholder="John Doe"
-                  required
-                />
-              </div>
-            <div>
-              <label htmlFor="customer_phone" className="block text-xs text-gray-600 mb-1">
-                Phone number *
-              </label>
-              <PhoneInput
-                id="customer_phone"
-                name="customer_phone"
-                value={form.customer_phone}
-                onChange={(next) => handleChange({ target: { name: "customer_phone", value: next } })}
-                required
-                className="bg-white/90"
-                placeholder="Enter phone number"
-              />
-              {phoneError ? <div className="text-xs text-red-600 mt-1">{phoneError}</div> : null}
-            </div>
-              <div>
-                <label htmlFor="customer_address" className="block text-xs text-gray-600 mb-1">
-                  Delivery address *
-                </label>
-                <textarea
-                  id="customer_address"
-                  name="customer_address"
-                  value={form.customer_address}
-                  onChange={handleChange}
-                  rows="2"
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-primary)] bg-white/90"
-                  placeholder="Street, city, postal code"
-                  required
-                />
-              </div>
-              <div>
-                <label htmlFor="customer_notes" className="block text-xs text-gray-600 mb-1">
-                  Delivery notes (optional)
-                </label>
-                <textarea
-                  id="customer_notes"
-                  name="customer_notes"
-                  value={form.customer_notes}
-                  onChange={handleChange}
-                  rows="2"
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-primary)] bg-white/90"
-                  placeholder="Gate code, preferred time, etc."
-                />
-              </div>
-              <button
-                type="submit"
-                disabled={!canSubmit || isSubmitting}
-                className="w-full py-3 bg-[var(--brand-accent)] text-white rounded-xl hover:opacity-95 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors font-semibold"
-              >
-                {isSubmitting ? "Placing order..." : "Place COD order"}
-              </button>
-            </form>
-            <button
-              type="button"
-              onClick={clearCart}
-              disabled={items.length === 0}
-              className="w-full py-2.5 border border-slate-200 rounded-xl text-gray-700 hover:bg-slate-50 disabled:opacity-60 disabled:cursor-not-allowed"
+          {showCheckout ? (
+            <div
+              className={`rounded-3xl border p-6 space-y-4 ${
+                isNeumorph ? "border-slate-200 bg-slate-100" : "border-slate-200/70 bg-white/90"
+              } ${isGlass ? "backdrop-blur" : ""}`}
             >
-              Clear cart
-            </button>
-          </div>
-        ) : null}
+              <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Checkout</div>
+              <div className="rounded-2xl border border-amber-200/70 bg-amber-50 px-4 py-3 text-xs text-amber-900 flex items-start gap-3">
+                <BadgeCheck className="w-5 h-5 text-amber-700 mt-0.5" />
+                <div>
+                  <div className="font-semibold">Cash on delivery</div>
+                  <div className="text-amber-800">A pharmacist will confirm your order by phone.</div>
+                </div>
+              </div>
+              {hasInvalidItems ? (
+                <div className="text-sm text-red-600">
+                  Some items cannot be ordered online. Please remove them and try again.
+                </div>
+              ) : null}
+              {hasRxItems ? (
+                <div className="rounded-2xl border border-slate-200/70 bg-white p-4 space-y-2 shadow-sm">
+                  <div className="text-sm font-semibold text-gray-900">Prescription required</div>
+                  <div className="text-xs text-gray-600">
+                    Upload your prescription to place Rx items. We will verify it before delivery.
+                  </div>
+                  {requiresPrescriptionUpload ? (
+                    <div className="text-xs text-amber-700">Upload required to complete checkout.</div>
+                  ) : null}
+                  <form onSubmit={handlePrescriptionUpload} className="space-y-2">
+                    <input
+                      type="file"
+                      accept="image/*,application/pdf"
+                      multiple
+                      onChange={(event) =>
+                        setRxUploadState((prev) => ({ ...prev, files: Array.from(event.target.files ?? []) }))
+                      }
+                      className="w-full text-sm"
+                    />
+                    {rxUploadState.error ? <p className="text-xs text-red-600">{rxUploadState.error}</p> : null}
+                    {rxUploadState.status ? <p className="text-xs text-green-600">{rxUploadState.status}</p> : null}
+                    {rxUploadState.tokens && rxUploadState.tokens.length > 0 ? (
+                      <p className="text-[11px] text-gray-600">
+                        Saved on this device. You can also keep this reference: {rxUploadState.tokens[0]}
+                      </p>
+                    ) : null}
+                    <button
+                      type="submit"
+                      className="px-4 py-2 text-sm bg-[var(--brand-primary)] text-white rounded-full hover:bg-[var(--brand-primary-600)] transition-colors"
+                    >
+                      Upload prescription
+                    </button>
+                  </form>
+                </div>
+              ) : null}
+              {result?.error ? <div className="text-sm text-red-600">{result.error}</div> : null}
+              {result?.tracking_code ? (
+                <div className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg p-3">
+                  <div className="text-xs text-green-800 uppercase tracking-wide">Tracking code</div>
+                  <div className="mt-2 flex items-center gap-2">
+                    <code className="flex-1 px-3 py-2 rounded-lg border border-green-200 bg-white text-green-900 break-all">
+                      {result.tracking_code}
+                    </code>
+                    <button
+                      type="button"
+                      onClick={() => handleCopyTrackingCode(result.tracking_code)}
+                      className="px-3 py-2 rounded-lg border border-green-200 text-green-800 hover:bg-green-100 text-xs font-semibold"
+                    >
+                      {copied ? "Copied" : "Copy"}
+                    </button>
+                  </div>
+                  <div className="mt-2">
+                    <Link to="/orders" className="underline text-green-800 hover:text-green-900">
+                      Track this order
+                    </Link>
+                  </div>
+                </div>
+              ) : null}
+              <form onSubmit={handleSubmit} className="space-y-3">
+                <div>
+                  <label htmlFor="customer_name" className="block text-xs text-gray-600 mb-1">
+                    Full name *
+                  </label>
+                  <input
+                    id="customer_name"
+                    name="customer_name"
+                    value={form.customer_name}
+                    onChange={handleChange}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-primary)] bg-white/90"
+                    placeholder="John Doe"
+                    required
+                  />
+                </div>
+                <div>
+                  <label htmlFor="customer_phone" className="block text-xs text-gray-600 mb-1">
+                    Phone number *
+                  </label>
+                  <PhoneInput
+                    id="customer_phone"
+                    name="customer_phone"
+                    value={form.customer_phone}
+                    onChange={(next) => handleChange({ target: { name: "customer_phone", value: next } })}
+                    required
+                    className="bg-white/90"
+                    placeholder="Enter phone number"
+                  />
+                  {phoneError ? <div className="text-xs text-red-600 mt-1">{phoneError}</div> : null}
+                </div>
+                <div>
+                  <label htmlFor="customer_address" className="block text-xs text-gray-600 mb-1">
+                    Delivery address *
+                  </label>
+                  <textarea
+                    id="customer_address"
+                    name="customer_address"
+                    value={form.customer_address}
+                    onChange={handleChange}
+                    rows="2"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-primary)] bg-white/90"
+                    placeholder="Street, city, postal code"
+                    required
+                  />
+                </div>
+                <div>
+                  <label htmlFor="customer_notes" className="block text-xs text-gray-600 mb-1">
+                    Delivery notes (optional)
+                  </label>
+                  <textarea
+                    id="customer_notes"
+                    name="customer_notes"
+                    value={form.customer_notes}
+                    onChange={handleChange}
+                    rows="2"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-primary)] bg-white/90"
+                    placeholder="Gate code, preferred time, etc."
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={!canSubmit || isSubmitting}
+                  className="w-full py-3 bg-[var(--brand-accent)] text-white rounded-full hover:opacity-95 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors font-semibold shadow-sm"
+                >
+                  {isSubmitting ? "Placing order..." : "Place COD order"}
+                </button>
+              </form>
+              <button
+                type="button"
+                onClick={clearCart}
+                disabled={items.length === 0}
+                className="w-full py-2.5 border border-slate-200 rounded-full text-gray-700 hover:bg-slate-50 disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                Clear cart
+              </button>
+            </div>
+          ) : null}
+        </div>
       </aside>
     </div>
   );

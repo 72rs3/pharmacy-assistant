@@ -97,7 +97,7 @@ def _stub_router(message: str) -> str:
         return json.dumps({"language": "en", "intent": "SERVICES", "query": None, "greeting": False, "confidence": 0.75, "risk": "low", "clarifying_questions": []})
     if any(w in low for w in ["toothpaste", "toothbrush", "shampoo", "soap", "vitamin"]):
         return json.dumps({"language": "en", "intent": "PRODUCT_SEARCH", "query": low, "greeting": False, "confidence": 0.7, "risk": "low", "clarifying_questions": []})
-    if any(w in low for w in ["panadol", "amoxicillin", "brufen"]) or any(w in low for w in ["have", "available", "stock", "price", "looking for", "need", "want"]):
+    if any(w in low for w in ["panadol", "amoxicillin", "brufen"]) or any(w in low for w in ["have", "available", "stock", "price", "looking for", "need", "want", "give me"]):
         q = low
         for prefix in ["im looking for", "i'm looking for", "looking for", "i want", "i need", "do you have"]:
             if q.startswith(prefix):
@@ -134,7 +134,13 @@ def _stub_generate(tool_context: dict) -> str:
             price = item.get("price")
             if rx:
                 answer = f"Yes, we have {name} available. This medicine requires a prescription."
-                actions = [{"type": "upload_prescription", "label": "Upload prescription", "payload": {"medicine_id": int(item.get("id"))}}]
+                actions = [
+                    {
+                        "type": "add_to_cart",
+                        "label": "Add to cart",
+                        "payload": {"medicine_id": int(item.get("id")), "quantity": 1, "requires_prescription": True},
+                    }
+                ]
             elif stock > 0:
                 answer = f"Yes, we have {name} available." + (f" Price: {float(price):.2f}." if price is not None else "")
                 actions = [{"type": "add_to_cart", "label": "Add to cart", "payload": {"medicine_id": int(item.get("id")), "quantity": 1}}]

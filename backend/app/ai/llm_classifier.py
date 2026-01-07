@@ -108,6 +108,7 @@ async def classify_message(message: str) -> ClassifierResult | None:
         "- If the user asks about hours/contact, intent=HOURS_CONTACT.\n"
         "- If booking/appointment, intent=APPOINTMENT_BOOKING.\n"
         "- If medical advice risk/emergency/dose/symptoms/pregnancy/child, intent=RISKY_MEDICAL and risk=high.\n"
+        "- If asking only about availability/ordering (even antibiotics/controlled meds), intent=MEDICINE_SEARCH.\n"
         "- Else if general policy/services, intent=SERVICES_INFO or GENERAL_RAG.\n"
         "- Greetings/thanks -> GREETING.\n"
         "- If unclear -> UNKNOWN.\n"
@@ -178,6 +179,8 @@ def fallback_classify(message: str) -> ClassifierResult:
         w in tokens for w in {"diagnose", "dosage", "dose", "pregnant", "pregnancy", "breastfeed", "child", "infant"}
     ):
         return ClassifierResult(intent="RISKY_MEDICAL", language=language, risk="high")
+    if "give me" in low:
+        return ClassifierResult(intent="MEDICINE_SEARCH", language=language, query=msg)
     if any(w in tokens for w in {"cart", "add", "order", "reserve", "checkout"}):
         return ClassifierResult(intent="ORDER_CART", language=language)
     if any(w in tokens for w in {"upload", "prescription"}):

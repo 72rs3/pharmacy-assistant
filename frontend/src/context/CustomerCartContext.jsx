@@ -50,6 +50,7 @@ export function CustomerCartProvider({ children }) {
             name: String(item.name ?? "Item"),
             price: Number(item.price ?? 0),
             image: item.image ?? item.image_url ?? "",
+            requires_prescription: Boolean(item.requires_prescription ?? item.rx ?? false),
             quantity: 1,
           },
         ];

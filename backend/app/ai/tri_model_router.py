@@ -58,6 +58,56 @@ def _detect_language(message: str) -> str:
     return "en"
 
 
+def _looks_like_availability_request(message: str) -> bool:
+    low = (message or "").strip().lower()
+    if not low:
+        return False
+    intent_phrases = [
+        "do you have",
+        "do u have",
+        "available",
+        "availability",
+        "in stock",
+        "stock",
+        "price",
+        "cost",
+        "buy",
+        "order",
+        "add to cart",
+        "looking for",
+        "search",
+        "find",
+        "need",
+        "want",
+        "give me",
+    ]
+    if not any(phrase in low for phrase in intent_phrases):
+        return False
+    risk_phrases = [
+        "dose",
+        "dosage",
+        "how to take",
+        "how should i",
+        "can i take",
+        "should i take",
+        "side effect",
+        "interaction",
+        "contraindication",
+        "pregnant",
+        "pregnancy",
+        "breastfeed",
+        "child",
+        "infant",
+        "symptom",
+        "pain",
+        "fever",
+        "cough",
+        "rash",
+        "emergency",
+    ]
+    return not any(phrase in low for phrase in risk_phrases)
+
+
 def _heuristic_fallback(message: str) -> RouterIntent:
     low = (message or "").strip().lower()
     tokens = re.findall(r"[a-zA-Z0-9]+", low)
@@ -79,6 +129,8 @@ def _heuristic_fallback(message: str) -> RouterIntent:
         w in low for w in ["chest pain", "shortness of breath", "seizure", "overdose"]
     ):
         return RouterIntent(language=lang, intent="RISKY_MEDICAL", confidence=0.9, risk="high", greeting=greeting)
+    if _looks_like_availability_request(message):
+        return RouterIntent(language=lang, intent="MEDICINE_SEARCH", confidence=0.7, risk="low", query=message.strip(), greeting=greeting)
     if any(w in tokens for w in {"hours", "open", "opening", "closing", "contact", "phone", "email", "address"}):
         return RouterIntent(language=lang, intent="HOURS_CONTACT", confidence=0.8, risk="low", greeting=greeting)
     if any(w in tokens for w in {"delivery", "deliver", "shipping", "cod", "cash", "payment", "refund", "return"}):
@@ -118,7 +170,8 @@ async def route_intent(message: str, *, pharmacy_id: int | None = None, session_
         "Rules:\n"
         "- Prefer MEDICINE_SEARCH when the user mentions a drug/medicine name or says looking for/need/price/stock.\n"
         "- Prefer PRODUCT_SEARCH for toothbrush/toothpaste/sunblock/vitamins/etc.\n"
-        "- If pregnancy/child/severe symptoms/interactions/antibiotics/controlled meds -> intent=RISKY_MEDICAL, risk=high.\n"
+        "- If pregnancy/child/severe symptoms/interactions/dosing/side effects -> intent=RISKY_MEDICAL, risk=high.\n"
+        "- If asking only about availability/ordering (even antibiotics/controlled meds), use MEDICINE_SEARCH.\n"
         "- If the message includes a greeting AND another request, set greeting=true but keep intent for the request.\n"
         "- Always set confidence 0..1.\n"
     )
@@ -134,7 +187,18 @@ async def route_intent(message: str, *, pharmacy_id: int | None = None, session_
         if not extracted:
             return _heuristic_fallback(message)
         data = json.loads(extracted)
-        return RouterIntent.model_validate(data)
+        result = RouterIntent.model_validate(data)
+        if result.intent == "RISKY_MEDICAL" and _looks_like_availability_request(message):
+            return RouterIntent(
+                language=result.language,
+                intent="MEDICINE_SEARCH",
+                query=message.strip() or None,
+                greeting=result.greeting,
+                confidence=max(0.55, result.confidence),
+                risk="low",
+                clarifying_questions=[],
+            )
+        return result
     except (ValidationError, json.JSONDecodeError):
         return _heuristic_fallback(message)
     except Exception:

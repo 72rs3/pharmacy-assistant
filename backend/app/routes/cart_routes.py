@@ -31,6 +31,7 @@ class CartItemOut(BaseModel):
     name: str
     price: float | None = None
     quantity: int
+    requires_prescription: bool = False
 
 
 @router.post("/items", response_model=CartItemOut)
@@ -58,10 +59,9 @@ def add_cart_item(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Medicine not found")
         if int(medicine.stock_level or 0) < int(payload.quantity):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Insufficient stock")
-        if bool(medicine.prescription_required):
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Prescription required; cannot add to cart")
         name = str(medicine.name)
         price = float(medicine.price) if medicine.price is not None else None
+        requires_prescription = bool(medicine.prescription_required)
     else:
         product = (
             db.query(models.Product)
@@ -74,6 +74,7 @@ def add_cart_item(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Insufficient stock")
         name = str(product.name)
         price = float(product.price) if product.price is not None else None
+        requires_prescription = False
 
     existing = (
         db.query(models.CartItem)
@@ -119,6 +120,7 @@ def add_cart_item(
         name=name,
         price=price,
         quantity=int(cart_item.quantity),
+        requires_prescription=requires_prescription,
     )
 
 
@@ -145,14 +147,17 @@ def list_cart_items(
             name = str(item.medicine.name) if item.medicine else "Unknown medicine"
             price = float(item.medicine.price) if item.medicine and item.medicine.price is not None else None
             item_type = "medicine"
+            requires_prescription = bool(item.medicine.prescription_required) if item.medicine else False
         elif item.product_id:
             name = str(item.product.name) if item.product else "Unknown product"
             price = float(item.product.price) if item.product and item.product.price is not None else None
             item_type = "product"
+            requires_prescription = False
         else:
             name = "Unknown item"
             price = None
             item_type = "unknown"
+            requires_prescription = False
         results.append(
             CartItemOut(
                 id=int(item.id),
@@ -164,6 +169,7 @@ def list_cart_items(
                 name=name,
                 price=price,
                 quantity=int(item.quantity or 0),
+                requires_prescription=requires_prescription,
             )
         )
     return results

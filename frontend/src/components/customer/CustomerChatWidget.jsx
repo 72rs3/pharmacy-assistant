@@ -457,6 +457,19 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
       handleSend(searchMatch[1].trim());
       return;
     }
+    if (normalized === "search another medicine") {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `bot-search-${Date.now()}`,
+          senderType: "AI",
+          text: "Sure — what medicine are you looking for?",
+          timestamp: new Date(),
+          allowPrescriptionUpload: false,
+        },
+      ]);
+      return;
+    }
     if (normalized.includes("appointment")) {
       const today = new Date().toISOString().slice(0, 10);
       setApptForm({
@@ -740,27 +753,19 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
         error: "",
         tokens,
       }));
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `bot-prescription-${Date.now()}`,
-          senderType: "AI",
-          text:
-            "Prescription received. Rx medicines are not added to cart. If you'd like, I can place the Rx order now so the pharmacist can approve it.",
-          actions: rxOrderDraft.medicineId
-            ? [
-                {
-                  type: "place_rx_order",
-                  label: "Place Rx order",
-                  medicine_id: rxOrderDraft.medicineId,
-                },
-              ]
-            : [],
-          timestamp: new Date(),
-          allowPrescriptionUpload: false,
-          quickReplies: ["Search another medicine", "Shop OTC products", "Book appointment", "Contact pharmacy"],
-        },
-      ]);
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `bot-prescription-${Date.now()}`,
+            senderType: "AI",
+            text:
+              "Prescription received. You can keep shopping and complete checkout when ready. We'll attach it to your Rx items.",
+            actions: [],
+            timestamp: new Date(),
+            allowPrescriptionUpload: false,
+            quickReplies: ["Search another medicine", "Shop OTC products", "Book appointment", "Contact pharmacy"],
+          },
+        ]);
     } catch (err) {
       setUploadState((prev) => ({
         ...prev,
@@ -1140,11 +1145,18 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
                                 quantity: Number(action.payload?.quantity ?? 1),
                               });
                               const item = res.data ?? {};
+                              const requiresPrescription = Boolean(
+                                action.payload?.requires_prescription ??
+                                  item.requires_prescription ??
+                                  item.rx ??
+                                  false
+                              );
                               addItem({
                                 item_type: item.item_type ?? (medicineId ? "medicine" : "product"),
                                 item_id: item.item_id ?? item.medicine_id ?? item.product_id ?? medicineId ?? productId,
                                 name: item.name,
                                 price: item.price,
+                                requires_prescription: requiresPrescription,
                               });
                               setMessages((prev) => [
                                 ...prev,
@@ -1460,7 +1472,7 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
           />
           <button
             type="button"
-            onClick={handleSend}
+            onClick={() => handleSend()}
             disabled={!inputValue.trim()}
             className="p-3 bg-[var(--brand-primary)] text-white rounded-xl hover:bg-[var(--brand-primary-600)] disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
           >
