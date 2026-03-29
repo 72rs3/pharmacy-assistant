@@ -9,6 +9,6 @@ export default defineConfig({
     host: true,
     port: 5173,
     strictPort: true,
-    allowedHosts: ['.localhost', 'localhost', '127.0.0.1', '::1'],
+    allowedHosts: ['.localhost', 'localhost', '127.0.0.1', '::1', '.onrender.com'],
   },
 })

@@ -13,4 +13,4 @@ COPY main.py /app/main.py
 
 EXPOSE 9000
 
-CMD ["bash", "-lc", "python -m alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port 9000"]
+CMD ["bash", "-lc", "python -m alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port ${PORT:-9000}"]
