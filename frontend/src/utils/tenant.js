@@ -1,4 +1,5 @@
 const DEFAULT_PORTAL_HOSTS = ["localhost", "127.0.0.1", "::1"];
+const RESERVED_CUSTOMER_PATHS = new Set(["", "shop", "orders", "appointments", "contact"]);
 
 function normalizeHost(value) {
   const raw = String(value ?? "").trim().toLowerCase();
@@ -24,6 +25,13 @@ function firstPathSegment(pathname = typeof window !== "undefined" ? window.loca
   return normalizedPath.split("/").filter(Boolean)[0]?.trim().toLowerCase() ?? "";
 }
 
+function isTenantPathSegment(segment) {
+  const normalized = String(segment ?? "").trim().toLowerCase();
+  if (!normalized) return false;
+  if (normalized === "portal") return false;
+  return !RESERVED_CUSTOMER_PATHS.has(normalized);
+}
+
 function portalHostSet() {
   const raw = import.meta?.env?.VITE_PORTAL_HOSTS;
   const hosts = (raw ? raw.split(",") : DEFAULT_PORTAL_HOSTS)
@@ -40,7 +48,7 @@ export function isPortalHost(
   const normalized = normalizeHost(hostname);
   if (!normalized) return false;
   const firstSegment = firstPathSegment(pathname);
-  if (portalHostSet().has(normalized) && firstSegment && firstSegment !== "portal") {
+  if (isTenantPathSegment(firstSegment)) {
     return false;
   }
   return portalHostSet().has(normalized);
@@ -52,11 +60,11 @@ export function getTenantSlug(
 ) {
   if (isPortalHost(hostname, pathname)) return "";
   const firstSegment = firstPathSegment(pathname);
-  if (!firstSegment || firstSegment === "portal") return "";
+  if (!isTenantPathSegment(firstSegment)) return "";
   const normalizedHost = normalizeHost(hostname);
   if (!normalizedHost) return "";
   if (portalHostSet().has(normalizedHost)) return firstSegment;
-  return "";
+  return normalizedHost.endsWith(".localhost") ? "" : firstSegment;
 }
 
 export function getCustomerBasePath(
