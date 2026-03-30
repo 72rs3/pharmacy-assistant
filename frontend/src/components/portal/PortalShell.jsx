@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import api from "../../api/axios";
+import { getStorefrontUrlForDomain } from "../../utils/tenant";
 
 const linkClass = ({ isActive }) =>
   `w-full flex items-center gap-3 px-5 py-3 text-sm transition-colors ${
@@ -133,20 +134,7 @@ export default function PortalShell({ children }) {
 
   const publicOrigin = useMemo(() => {
     if (!pharmacyDomain) return null;
-    const raw = pharmacyDomain.trim();
-    try {
-      if (raw.includes("://")) {
-        const url = new URL(raw);
-        return url.origin;
-      }
-      const base = new URL(window.location.origin);
-      const [host, port] = raw.split(":");
-      base.hostname = host;
-      if (port) base.port = port;
-      return base.origin;
-    } catch {
-      return `http://${raw}`;
-    }
+    return getStorefrontUrlForDomain(pharmacyDomain, window.location.origin);
   }, [pharmacyDomain]);
 
   const shareLinks = useMemo(() => {

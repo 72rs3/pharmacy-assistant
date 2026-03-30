@@ -1,4 +1,5 @@
 from fastapi import Depends, Header, HTTPException, Request, status
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app import models
@@ -12,11 +13,47 @@ def _normalize_domain(value: str) -> str:
     return domain
 
 
+def _normalize_slug(value: str) -> str:
+    return value.strip().lower().strip("/").split("/")[0].strip()
+
+
+def _find_pharmacy_by_slug(db: Session, slug: str) -> models.Pharmacy | None:
+    normalized = _normalize_slug(slug)
+    if not normalized:
+        return None
+    matches = (
+        db.query(models.Pharmacy)
+        .filter(
+            or_(
+                models.Pharmacy.domain == normalized,
+                models.Pharmacy.domain.like(f"{normalized}.%"),
+            )
+        )
+        .order_by(models.Pharmacy.id.asc())
+        .all()
+    )
+    if not matches:
+        return None
+    exact = next((pharmacy for pharmacy in matches if (pharmacy.domain or "").strip().lower() == normalized), None)
+    if exact is not None:
+        return exact
+    unique_prefix_matches = [pharmacy for pharmacy in matches if (pharmacy.domain or "").split(".")[0].strip().lower() == normalized]
+    if len(unique_prefix_matches) == 1:
+        return unique_prefix_matches[0]
+    if len(unique_prefix_matches) > 1:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Multiple pharmacies match this tenant slug",
+        )
+    return matches[0]
+
+
 def get_current_pharmacy(
     request: Request,
     db: Session = Depends(get_db),
     pharmacy_id: int | None = Header(None, alias="X-Pharmacy-ID"),
     pharmacy_domain: str | None = Header(None, alias="X-Pharmacy-Domain"),
+    pharmacy_slug: str | None = Header(None, alias="X-Pharmacy-Slug"),
     forwarded_host: str | None = Header(None, alias="X-Forwarded-Host"),
 ) -> models.Pharmacy:
     if pharmacy_id is not None:
@@ -35,9 +72,14 @@ def get_current_pharmacy(
         if pharmacy is not None:
             return pharmacy
 
+    if pharmacy_slug:
+        pharmacy = _find_pharmacy_by_slug(db, pharmacy_slug)
+        if pharmacy is not None:
+            return pharmacy
+
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
-        detail="Provide X-Pharmacy-ID, or set pharmacy.domain and send X-Pharmacy-Domain",
+        detail="Provide X-Pharmacy-ID, or set pharmacy.domain and send X-Pharmacy-Domain/X-Pharmacy-Slug",
     )
 
 
@@ -59,6 +101,7 @@ def get_public_pharmacy(
     request: Request,
     db: Session = Depends(get_db),
     pharmacy_domain: str | None = Header(None, alias="X-Pharmacy-Domain"),
+    pharmacy_slug: str | None = Header(None, alias="X-Pharmacy-Slug"),
     forwarded_host: str | None = Header(None, alias="X-Forwarded-Host"),
 ) -> models.Pharmacy:
     """
@@ -73,9 +116,13 @@ def get_public_pharmacy(
 
     normalized = _normalize_domain(domain)
     pharmacy = db.query(models.Pharmacy).filter(models.Pharmacy.domain == normalized).first()
-    if pharmacy is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pharmacy not found")
-    return pharmacy
+    if pharmacy is not None:
+        return pharmacy
+    if pharmacy_slug:
+        pharmacy = _find_pharmacy_by_slug(db, pharmacy_slug)
+        if pharmacy is not None:
+            return pharmacy
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pharmacy not found")
 
 
 def get_active_public_pharmacy(

@@ -24,10 +24,11 @@ import OwnerPrescriptions from "./pages/OwnerPrescriptions";
 import OwnerAppointments from "./pages/OwnerAppointments";
 import OwnerEscalations from "./pages/OwnerEscalations";
 import OwnerInbox from "./pages/OwnerInbox";
-import { isPortalHost } from "./utils/tenant";
+import { getCustomerBasePath, isPortalHost } from "./utils/tenant";
 
 export default function App() {
   const portal = isPortalHost();
+  const customerBasePath = getCustomerBasePath();
 
   useEffect(() => {
     document.body.classList.toggle("portal-theme", portal);
@@ -35,7 +36,7 @@ export default function App() {
   }, [portal]);
 
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={!portal && customerBasePath ? customerBasePath : undefined}>
       {portal ? (
         <Routes>
           <Route path="/" element={<Home />} />

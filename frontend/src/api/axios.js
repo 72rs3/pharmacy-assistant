@@ -1,5 +1,5 @@
 import axios from "axios";
-import { isPortalHost } from "../utils/tenant";
+import { getTenantSlug, isPortalHost } from "../utils/tenant";
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL,
@@ -19,9 +19,14 @@ api.interceptors.request.use((config) => {
     if (isPortalHost()) return localStorage.getItem("pharmacy_domain");
     return typeof window !== "undefined" ? window.location.hostname?.toLowerCase() : null;
   })();
+  const slug = isPortalHost() ? null : getTenantSlug();
   if (domain) {
     config.headers = config.headers ?? {};
     config.headers["X-Pharmacy-Domain"] = domain;
+  }
+  if (slug) {
+    config.headers = config.headers ?? {};
+    config.headers["X-Pharmacy-Slug"] = slug;
   }
 
   if (isPortalHost()) {
