@@ -1,31 +1,66 @@
 # Production Deployment
 
-This project is prepared for a Cloudflare-centered deployment with Render providing managed PostgreSQL.
+This project is prepared for a professional Cloudflare + Render deployment.
 
 ## Target Architecture
 
 - Frontend: Cloudflare Pages
-- Backend API: Cloudflare Containers running `backend/Dockerfile`
+- Backend API: Render Web Service running `backend/Dockerfile`
 - Database: Render Postgres with `pgvector`
-- Prescription files: Cloudflare R2
+- Prescription files: Cloudflare R2 once R2 is enabled
 - DNS, SSL, CDN, WAF: Cloudflare
 - Email: Resend
 - AI: OpenRouter
 
-## Render Postgres
+Cloudflare Containers are still a valid future backend target, but this account currently does not have Cloudflare Containers access. Render is the deployable backend path now.
 
-1. Create the database from `render.yaml`, or create it manually in Render.
-2. Use PostgreSQL 16 or newer.
-3. Keep the database in `frankfurt` unless your users are mainly in another region.
-4. Use a paid database plan for point-in-time recovery and logical backups.
-5. Copy the external database URL and convert it to SQLAlchemy format:
+## Render Backend And Postgres
+
+Create the production backend and database from `render.yaml`.
+
+Render Blueprint URL:
+
+```text
+https://dashboard.render.com/blueprint/new?repo=https://github.com/72rs3/pharmacy-assistant
+```
+
+The Blueprint provisions:
+
+- `pharmacy-assistant-api`: Docker web service from `backend/Dockerfile`
+- `pharmacy-assistant-postgres`: PostgreSQL 16 database in Frankfurt
+
+The backend service:
+
+- Runs migrations before startup.
+- Uses `/healthz` for health checks.
+- Reads `DATABASE_URL` from the managed Render database.
+- Prompts for real secrets in the Render Dashboard with `sync: false`.
+
+Required values to fill in the Render Blueprint form:
+
+```text
+PHARMACY_ADMIN_EMAIL
+PHARMACY_ADMIN_PASSWORD
+OPENROUTER_API_KEY
+R2_ACCOUNT_ID
+R2_ENDPOINT_URL
+R2_ACCESS_KEY_ID
+R2_SECRET_ACCESS_KEY
+RESEND_API_KEY
+RESEND_FROM
+```
+
+Render will generate `SECRET_KEY` automatically.
+
+Use PostgreSQL 16 or newer. Keep the database in `frankfurt` unless your users are mainly in another region. Use a paid database plan for point-in-time recovery and logical backups.
+
+If you create the database manually instead of using the Blueprint, copy the external database URL and convert it to SQLAlchemy format:
 
 ```text
 postgresql+psycopg://USER:PASSWORD@HOST:5432/DATABASE?sslmode=require
 ```
 
-6. Set this value as `DATABASE_URL` in the Cloudflare backend environment.
-7. The migration `backend/alembic/versions/4d5e6f708192_pgvector_rag_documents.py` enables `pgvector` with:
+The migration `backend/alembic/versions/4d5e6f708192_pgvector_rag_documents.py` enables `pgvector` with:
 
 ```sql
 CREATE EXTENSION IF NOT EXISTS vector;
@@ -54,11 +89,11 @@ R2_REGION=auto
 
 Prescription uploads are private by default. The backend downloads them from R2 only for approved pharmacy owners.
 
-## Cloudflare Backend
+## Optional Future Cloudflare Backend
 
-Deploy the backend as a Cloudflare Container from `backend/Dockerfile`.
+Deploying the backend as a Cloudflare Container from `backend/Dockerfile` requires Cloudflare Containers access on the account. The API currently reports that this requires the Workers Paid plan.
 
-Required backend environment variables:
+If Cloudflare Containers are enabled later, use the same backend environment variables currently defined in `render.yaml`:
 
 ```text
 DATABASE_URL=...
@@ -138,6 +173,8 @@ api.yourdomain.com      -> Cloudflare backend container
 *.yourdomain.com        -> Cloudflare Pages frontend, if pharmacies use subdomains
 ```
 
+For the current Render backend path, point `api.yourdomain.com` to the Render service custom domain instead of Cloudflare Containers.
+
 If pharmacy storefronts use subdomains, set each pharmacy `domain` to the subdomain label or hostname expected by the app.
 
 ## Launch Checklist
@@ -146,7 +183,7 @@ If pharmacy storefronts use subdomains, set each pharmacy `domain` to the subdom
 - Use a strong `SECRET_KEY`.
 - Create the first admin with a strong temporary password, then rotate it.
 - Confirm Render backups are enabled.
-- Confirm R2 upload/download works through the owner portal.
+- Enable R2 in the Cloudflare dashboard, then confirm upload/download works through the owner portal.
 - Confirm CORS only allows production domains.
 - Confirm `/healthz` returns `{"ok": true}`.
 - Run migrations against production.
@@ -182,7 +219,7 @@ Cloudflare:
 
 Render:
 
-- `render.yaml` is ready for the managed Postgres database.
+- `render.yaml` is ready for the managed Postgres database and backend API service.
 - No `RENDER_API_KEY` / `RENDER_API_TOKEN` was present locally, and no callable Render deployment tools were exposed in this session.
 
 Docker:
