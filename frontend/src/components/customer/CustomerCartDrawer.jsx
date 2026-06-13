@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { BadgeCheck, X } from "lucide-react";
 import api from "../../api/axios";
-import { useCustomerCart } from "../../context/CustomerCartContext";
+import { useCustomerCart } from "../../context/customerCartContextValue";
 import { useTenant } from "../../context/TenantContext";
 import { isValidE164 } from "../../utils/validation";
 import PhoneInput from "../ui/PhoneInput";

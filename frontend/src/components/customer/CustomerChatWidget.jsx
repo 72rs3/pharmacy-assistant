@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Minimize2, Pill, Send, UserRound, X } from "lucide-react";
 import api from "../../api/axios";
-import { useCustomerCart } from "../../context/CustomerCartContext";
+import { useCustomerCart } from "../../context/customerCartContextValue";
 import { useTenant } from "../../context/TenantContext";
 import { isValidE164 } from "../../utils/validation";
 import PhoneInput from "../ui/PhoneInput";
@@ -100,7 +100,7 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
   });
   const [intakeError, setIntakeError] = useState("");
   const [isSubmittingIntake, setIsSubmittingIntake] = useState(false);
-  const [rxOrderDraft, setRxOrderDraft] = useState({ medicineId: null, showForm: false });
+  const [, setRxOrderDraft] = useState({ medicineId: null, showForm: false });
   const [rxForm, setRxForm] = useState({
     customer_name: "",
     customer_phone: "",

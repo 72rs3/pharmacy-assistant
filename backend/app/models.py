@@ -1,10 +1,13 @@
-from sqlalchemy import Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, JSON, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from datetime import datetime
 
 from app.db import Base
 from app.ai.types import Embedding
+
+
+JSONStore = JSON().with_variant(JSONB, "postgresql")
 
 
 class Pharmacy(Base):
@@ -359,7 +362,7 @@ class ChatSession(Base):
     user_session_id = Column(String, nullable=False, index=True)
     status = Column(String, nullable=False, default="ACTIVE")
     last_activity_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    intake_data = Column(JSONB, nullable=True)
+    intake_data = Column(JSONStore, nullable=True)
     turns_json = Column(Text, nullable=False, default="[]")
     expires_at = Column(DateTime, nullable=False, index=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
@@ -376,7 +379,7 @@ class ChatMessage(Base):
     sender_type = Column(String, nullable=False)
     text = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    meta = Column("metadata", JSONB, nullable=True)
+    meta = Column("metadata", JSONStore, nullable=True)
 
     session = relationship("ChatSession", back_populates="messages")
 

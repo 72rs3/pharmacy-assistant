@@ -1,0 +1,10 @@
+databases:
+  - name: pharmacy-assistant-postgres
+    databaseName: pharmacy
+    user: pharmacy
+    plan: basic-256mb
+    region: frankfurt
+    postgresMajorVersion: "16"
+    ipAllowList:
+      - source: 0.0.0.0/0
+        description: Cloudflare backend egress; tighten after final runtime is known.

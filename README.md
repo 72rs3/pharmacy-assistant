@@ -67,6 +67,16 @@ docker compose up -d --build frontend
 docker compose logs --tail=200 backend
 ```
 
+## Production Deployment
+Recommended production architecture:
+- Cloudflare Pages for the frontend.
+- Cloudflare Containers for the FastAPI backend.
+- Cloudflare R2 for private prescription uploads.
+- Render Postgres with pgvector for the database/RAG store.
+- Resend for transactional email.
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) for the full setup.
+
 ## Notes
 - Cart is persisted in the database by `session_id`.
 - AI responses are constrained by tool output to avoid hallucinations.

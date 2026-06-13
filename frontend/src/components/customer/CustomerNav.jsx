@@ -1,6 +1,6 @@
 import { NavLink } from "react-router-dom";
 import { MessageCircle, ShoppingCart } from "lucide-react";
-import { useCustomerCart } from "../../context/CustomerCartContext";
+import { useCustomerCart } from "../../context/customerCartContextValue";
 import { useTenant } from "../../context/TenantContext";
 
 export default function CustomerNav({ activeBrand = "Sunr Pharmacy", logoUrl = "", onChatToggle, onCartToggle }) {

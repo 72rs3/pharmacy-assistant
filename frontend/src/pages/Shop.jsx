@@ -3,7 +3,7 @@ import { Baby, Droplet, Heart, MessageCircle, Search, Shield, Sparkles, Sun } fr
 import api from "../api/axios";
 import EmptyState from "../components/ui/EmptyState";
 import { useCustomerUi } from "../utils/customer-ui";
-import { useCustomerCart } from "../context/CustomerCartContext";
+import { useCustomerCart } from "../context/customerCartContextValue";
 import { useTenant } from "../context/TenantContext";
 
 const formatMoney = (value) => new Intl.NumberFormat(undefined, { style: "currency", currency: "USD" }).format(value);

@@ -176,7 +176,7 @@ def _maybe_handle_urgent_red_flags(
         customer_query=user_text,
         ai_response=answer,
         confidence_score=0.0,
-        escalated_to_human=False,
+        escalated_to_human=True,
         created_at=datetime.utcnow(),
         pharmacy_id=pharmacy_id,
     )
@@ -189,7 +189,7 @@ def _maybe_handle_urgent_red_flags(
         "AI",
         answer,
         _build_ai_metadata(
-            intent="URGENT_REDFLAG",
+            intent="RISKY_MEDICAL",
             actions=[triage_action],
             cards=[],
             quick_replies=[],
@@ -208,8 +208,8 @@ def _maybe_handle_urgent_red_flags(
         actions=[triage_action],
         quick_replies=[],
         confidence_score=interaction.confidence_score,
-        escalated_to_human=False,
-        intent="URGENT_REDFLAG",
+        escalated_to_human=interaction.escalated_to_human,
+        intent="RISKY_MEDICAL",
         created_at=interaction.created_at,
         data_last_updated_at=None,
         indexed_at=None,
@@ -1416,6 +1416,19 @@ def _enforce_action_policy(tool_ctx: object, actions: list[schemas.AIAction]) ->
     if stock is not None and stock <= 0:
         return dedupe([a for a in actions if a.type != "add_to_cart"])
 
+    if rx:
+        filtered = [a for a in actions if a.type != "add_to_cart"]
+        if not any(a.type == "upload_prescription" for a in filtered):
+            filtered.append(
+                schemas.AIAction(
+                    type="upload_prescription",
+                    label="Upload prescription",
+                    medicine_id=med_id,
+                    payload={"medicine_id": med_id, "quantity": 1, "requires_prescription": True} if med_id else None,
+                )
+            )
+        return dedupe(filtered)
+
     if med_id and stock is not None and stock > 0 and not any(a.type == "add_to_cart" for a in actions):
         actions = actions + [
             schemas.AIAction(
@@ -1536,14 +1549,15 @@ async def chat(
         if is_risky:
             answer = (
                 "This may require a pharmacist. Tap 'Talk to pharmacist' to start a consultation. "
-                "If symptoms are severe or urgent, seek medical care immediately."
+                "If symptoms are severe or urgent, seek medical care immediately. "
+                "This is not medical advice."
             )
             interaction = models.AIInteraction(
                 customer_id=customer_id,
                 customer_query=message,
                 ai_response=answer,
                 confidence_score=0.0,
-                escalated_to_human=False,
+                escalated_to_human=True,
                 created_at=datetime.utcnow(),
                 pharmacy_id=pharmacy_id,
             )

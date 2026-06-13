@@ -150,3 +150,8 @@ app.include_router(contact_router)
 @app.get("/")
 def read_root():
     return {"message": "Backend is running"}
+
+
+@app.get("/healthz")
+def healthz():
+    return {"ok": True}

@@ -1,16 +1,7 @@
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { CustomerCartContext } from "./customerCartContextValue";
 
 const CART_STORAGE_KEY = "customer_cart_items";
-
-const CustomerCartContext = createContext({
-  items: [],
-  addItem: () => {},
-  removeItem: () => {},
-  updateItemQuantity: () => {},
-  clearCart: () => {},
-  totalItems: 0,
-  totalPrice: 0,
-});
 
 const readStoredItems = () => {
   if (typeof window === "undefined") return [];
@@ -108,5 +99,3 @@ export function CustomerCartProvider({ children }) {
 
   return <CustomerCartContext.Provider value={value}>{children}</CustomerCartContext.Provider>;
 }
-
-export const useCustomerCart = () => useContext(CustomerCartContext);

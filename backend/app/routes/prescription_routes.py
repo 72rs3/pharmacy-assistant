@@ -3,22 +3,23 @@ from __future__ import annotations
 import os
 import secrets
 from datetime import datetime
-from pathlib import Path
 from typing import List
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app import models, schemas
 from app.auth.deps import require_approved_owner
-from app.db import BACKEND_DIR, get_db
+from app.db import get_db
 from app.deps import get_active_public_pharmacy_id
+from app.utils.file_storage import load_prescription_file, save_prescription_upload
 
 router = APIRouter(prefix="/prescriptions", tags=["Prescriptions"])
 
-UPLOAD_DIR = Path(os.getenv("PRESCRIPTION_UPLOAD_DIR", BACKEND_DIR / "uploads" / "prescriptions"))
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+MAX_UPLOAD_BYTES = int(os.getenv("PRESCRIPTION_MAX_UPLOAD_BYTES", str(10 * 1024 * 1024)))
+ALLOWED_CONTENT_TYPES = {"image/png", "image/jpeg", "image/webp", "image/gif", "application/pdf"}
 
 
 def _validate_order(db: Session, order_id: int, tenant_pharmacy_id: int) -> models.Order:
@@ -32,22 +33,32 @@ def _validate_order(db: Session, order_id: int, tenant_pharmacy_id: int) -> mode
     return order
 
 
-def _write_upload(file: UploadFile, *, token: str) -> Path:
-    original = file.filename or "upload"
-    safe_name = original.replace("/", "_").replace("\\", "_")
-    dest = UPLOAD_DIR / f"{token}_{safe_name}"
-    return dest
-
-
 def _is_allowed_file(file: UploadFile) -> bool:
     ctype = (file.content_type or "").lower()
-    if ctype.startswith("image/"):
-        return True
-    if ctype == "application/pdf":
+    if ctype in ALLOWED_CONTENT_TYPES:
         return True
     # Fallback to extension checks when the browser doesn't send a content type.
     name = (file.filename or "").lower()
     return name.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif", ".pdf"))
+
+
+async def _read_limited_upload(file: UploadFile) -> bytes:
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File is empty")
+    if len(content) > MAX_UPLOAD_BYTES:
+        max_mb = max(1, MAX_UPLOAD_BYTES // (1024 * 1024))
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File is too large. Maximum size is {max_mb} MB.",
+        )
+    return content
+
+
+def _attachment_header(filename: str) -> str:
+    safe_fallback = "".join(ch if ch.isalnum() or ch in {"-", "_", "."} else "_" for ch in filename) or "prescription"
+    encoded = quote(filename, safe="")
+    return f"attachment; filename=\"{safe_fallback}\"; filename*=UTF-8''{encoded}"
 
 
 @router.post("/draft", response_model=list[schemas.PrescriptionDraftOut])
@@ -69,15 +80,14 @@ async def upload_prescription_draft(
                 detail="Only images and PDF files are supported",
             )
         token = secrets.token_urlsafe(16)
-        dest = _write_upload(file, token=token)
-        content = await file.read()
-        dest.write_bytes(content)
+        content = await _read_limited_upload(file)
+        stored = save_prescription_upload(file, content, token=token, pharmacy_id=tenant_pharmacy_id)
 
         created.append(
             models.Prescription(
-                file_path=str(dest),
-                original_filename=file.filename,
-                content_type=file.content_type,
+                file_path=stored.location,
+                original_filename=stored.original_filename,
+                content_type=stored.content_type,
                 status="DRAFT",
                 draft_token=token,
                 pharmacy_id=tenant_pharmacy_id,
@@ -122,14 +132,13 @@ async def upload_prescription(
                 detail="Only images and PDF files are supported",
             )
         token = secrets.token_urlsafe(16)
-        dest = _write_upload(file, token=token)
-        content = await file.read()
-        dest.write_bytes(content)
+        content = await _read_limited_upload(file)
+        stored = save_prescription_upload(file, content, token=token, pharmacy_id=tenant_pharmacy_id)
         created.append(
             models.Prescription(
-                file_path=str(dest),
-                original_filename=file.filename,
-                content_type=file.content_type,
+                file_path=stored.location,
+                original_filename=stored.original_filename,
+                content_type=stored.content_type,
                 status="PENDING",
                 draft_token=None,
                 pharmacy_id=tenant_pharmacy_id,
@@ -222,15 +231,13 @@ def download_prescription_file(
     if not prescription:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Prescription not found")
 
-    file_path = Path(prescription.file_path or "")
-    try:
-        resolved = file_path.resolve(strict=True)
-        upload_root = UPLOAD_DIR.resolve(strict=False)
-        if upload_root not in resolved.parents and resolved != upload_root:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid file path")
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found") from exc
-
-    filename = prescription.original_filename or resolved.name
-    media_type = prescription.content_type or "application/octet-stream"
-    return FileResponse(path=str(resolved), media_type=media_type, filename=filename)
+    loaded = load_prescription_file(
+        prescription.file_path or "",
+        original_filename=prescription.original_filename,
+        content_type=prescription.content_type,
+    )
+    return Response(
+        content=loaded.body,
+        media_type=loaded.content_type,
+        headers={"Content-Disposition": _attachment_header(loaded.filename)},
+    )
