@@ -1,5 +1,6 @@
 import os
 import secrets
+from urllib.parse import urlparse
 
 from sqlalchemy.orm import Session
 
@@ -35,6 +36,8 @@ def ensure_default_pharmacy(db: Session | None = None) -> bool:
     """
 
     domain_raw = os.getenv("DEFAULT_PHARMACY_DOMAIN")
+    if not domain_raw and os.getenv("FRONTEND_DIST_DIR"):
+        domain_raw = urlparse(os.getenv("APP_PUBLIC_BASE_URL", "")).netloc
     if not domain_raw:
         return False
 
@@ -42,8 +45,8 @@ def ensure_default_pharmacy(db: Session | None = None) -> bool:
     if not normalized_domain:
         return False
 
-    name = (os.getenv("DEFAULT_PHARMACY_NAME") or "Pharmacy").strip() or "Pharmacy"
-    auto_approve = _env_flag("DEFAULT_PHARMACY_AUTO_APPROVE", default=False)
+    name = (os.getenv("DEFAULT_PHARMACY_NAME") or "Sunr Pharmacy").strip() or "Sunr Pharmacy"
+    auto_approve = _env_flag("DEFAULT_PHARMACY_AUTO_APPROVE", default=bool(os.getenv("FRONTEND_DIST_DIR")))
 
     owns_session = db is None
     session = db or SessionLocal()
@@ -79,4 +82,3 @@ def ensure_default_pharmacy(db: Session | None = None) -> bool:
     finally:
         if owns_session:
             session.close()
-
