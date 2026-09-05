@@ -1,8 +1,11 @@
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import inspect
 
 from app.db import Base, engine, ensure_sqlite_schema, SessionLocal
@@ -149,9 +152,33 @@ app.include_router(contact_router)
 
 @app.get("/")
 def read_root():
+    frontend_index = Path(os.getenv("FRONTEND_DIST_DIR", "/app/frontend_dist")) / "index.html"
+    if frontend_index.exists():
+        return FileResponse(frontend_index)
     return {"message": "Backend is running"}
 
 
 @app.get("/healthz")
 def healthz():
     return {"ok": True}
+
+
+def _mount_frontend() -> None:
+    frontend_dist = Path(os.getenv("FRONTEND_DIST_DIR", "/app/frontend_dist"))
+    index_file = frontend_dist / "index.html"
+    if not index_file.exists():
+        return
+
+    assets_dir = frontend_dist / "assets"
+    if assets_dir.exists():
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="frontend-assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    def serve_frontend_app(full_path: str):
+        requested = frontend_dist / full_path
+        if requested.is_file():
+            return FileResponse(requested)
+        return FileResponse(index_file)
+
+
+_mount_frontend()

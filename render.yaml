@@ -1,29 +1,27 @@
 services:
   - type: web
-    name: pharmacy-assistant-api
+    name: pharmacy-assistant-demo
     runtime: docker
-    plan: starter
+    plan: free
     region: frankfurt
     branch: main
     autoDeploy: true
-    dockerContext: ./backend
-    dockerfilePath: ./backend/Dockerfile
+    dockerContext: .
+    dockerfilePath: ./Dockerfile.demo
     healthCheckPath: /healthz
     envVars:
       - key: DATABASE_URL
-        fromDatabase:
-          name: pharmacy-assistant-postgres
-          property: connectionString
+        sync: false
       - key: DB_AUTO_CREATE
         value: "0"
       - key: SECRET_KEY
         generateValue: true
       - key: CORS_ORIGINS
-        value: https://pharmacy-assistant-frontend.pages.dev
+        value: https://pharmacy-assistant-demo.onrender.com
       - key: CORS_ALLOW_ORIGIN_REGEX
-        value: ^https://([a-z0-9-]+\.)?pharmacy-assistant-frontend\.pages\.dev$
+        value: ^https://pharmacy-assistant-demo\.onrender\.com$
       - key: APP_PUBLIC_BASE_URL
-        value: https://pharmacy-assistant-frontend.pages.dev
+        value: https://pharmacy-assistant-demo.onrender.com
       - key: PHARMACY_ADMIN_EMAIL
         sync: false
       - key: PHARMACY_ADMIN_PASSWORD
@@ -42,12 +40,30 @@ services:
         value: openai/gpt-4o-mini
       - key: OPENROUTER_FALLBACK_MODEL
         value: meta-llama/llama-3.3-70b-instruct
+      - key: OPENROUTER_CHAT_MODEL
+        value: deepseek/deepseek-r1-0528:free
       - key: OPENROUTER_EMBED_MODEL
         value: openai/text-embedding-3-small
       - key: OPENROUTER_EMBED_DIM
         value: "1536"
+      - key: OPENROUTER_TEMPERATURE
+        value: "0.2"
+      - key: OPENROUTER_TIMEOUT_S
+        value: "60"
+      - key: OPENROUTER_TIMEOUT_SECONDS
+        value: "30"
+      - key: OPENROUTER_MAX_RETRIES
+        value: "1"
+      - key: OPENROUTER_MAX_TOKENS
+        value: "400"
+      - key: OPENROUTER_ROUTER_MAX_TOKENS
+        value: "150"
+      - key: OPENROUTER_MAIN_MAX_TOKENS
+        value: "600"
+      - key: OPENROUTER_FALLBACK_MAX_TOKENS
+        value: "900"
       - key: OPENROUTER_HTTP_REFERER
-        value: https://pharmacy-assistant-frontend.pages.dev
+        value: https://pharmacy-assistant-demo.onrender.com
       - key: OPENROUTER_X_TITLE
         value: Pharmacy Assistant
       - key: RAG_TOP_K
@@ -63,37 +79,14 @@ services:
       - key: RAG_SOURCES_MAX_CHARS
         value: "6000"
       - key: PRESCRIPTION_STORAGE
-        value: r2
+        value: local
       - key: PRESCRIPTION_MAX_UPLOAD_BYTES
         value: "10485760"
-      - key: R2_ACCOUNT_ID
-        sync: false
-      - key: R2_ENDPOINT_URL
-        sync: false
-      - key: R2_ACCESS_KEY_ID
-        sync: false
-      - key: R2_SECRET_ACCESS_KEY
-        sync: false
-      - key: R2_BUCKET
-        value: pharmacy-prescriptions
-      - key: R2_REGION
-        value: auto
       - key: RESEND_API_KEY
         sync: false
       - key: RESEND_FROM
         sync: false
       - key: ENABLE_APPOINTMENT_REMINDERS
-        value: "true"
+        value: "false"
       - key: REMINDER_POLL_SECONDS
         value: "300"
-
-databases:
-  - name: pharmacy-assistant-postgres
-    databaseName: pharmacy
-    user: pharmacy
-    plan: basic-256mb
-    region: frankfurt
-    postgresMajorVersion: "16"
-    ipAllowList:
-      - source: 0.0.0.0/0
-        description: Cloudflare backend egress; tighten after final runtime is known.
