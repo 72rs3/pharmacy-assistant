@@ -12,6 +12,8 @@ services:
     envVars:
       - key: DB_AUTO_CREATE
         value: "1"
+      - key: ENABLE_DEMO_IMPORT
+        value: "1"
       - key: SECRET_KEY
         generateValue: true
       - key: CORS_ORIGINS

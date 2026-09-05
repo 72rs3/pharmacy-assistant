@@ -25,6 +25,7 @@ from app.routes.cart_routes import router as cart_router
 from app.routes.chat_routes import router as chat_router
 from app.routes.pharmacist_routes import router as pharmacist_router
 from app.routes.contact_routes import router as contact_router
+from app.routes.demo_import_routes import router as demo_import_router
 from app.appointments.reminders import process_due_reminders, process_no_shows
 
 def _split_csv(value: str | None) -> list[str]:
@@ -150,6 +151,7 @@ app.include_router(cart_router)
 app.include_router(chat_router)
 app.include_router(pharmacist_router)
 app.include_router(contact_router)
+app.include_router(demo_import_router)
 
 
 @app.get("/")
