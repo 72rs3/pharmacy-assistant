@@ -24,7 +24,12 @@ from app.deps import get_active_public_pharmacy_id
 
 router = APIRouter(prefix="/ai", tags=["AI"])
 
-_HEADACHE_PATTERN = re.compile(r"\b(headache|head\s*ache|migraine|head\s*pain|heache)\b", re.IGNORECASE)
+_HEADACHE_PATTERN = re.compile(
+    r"\b(headache|head\s*ache|migraine|head\s*pain|heache)\b|"
+    r"\bhead\b.{0,24}\b(hurt|hurts|hurting|ache|aches|aching|pain|paining)\b|"
+    r"\b(hurt|hurts|hurting|ache|aches|aching|pain|paining)\b.{0,24}\bhead\b",
+    re.IGNORECASE,
+)
 _HEADACHE_REDFLAG_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\b(worst headache|thunderclap|sudden(ly)?|came on suddenly)\b", re.IGNORECASE), "sudden / worst-ever"),
     (re.compile(r"\b(confusion|confused|disoriented|slurred speech|seizure|faint(ing|ed)?|passed out)\b", re.IGNORECASE), "neurologic symptoms"),
@@ -35,7 +40,9 @@ _HEADACHE_REDFLAG_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 ]
 
 _ABDOMINAL_PAIN_PATTERN = re.compile(
-    r"\b(stomach pain|stomac[k]?\s*(pain|ain)|stomach\s*ain|stomach ache|stomac[k]?\s*ache|abdominal pain|belly pain|tummy ache|stomach cramps|cramps)\b",
+    r"\b(stomach pain|stomac[k]?\s*(pain|ain)|stomach\s*ain|stomach ache|stomac[k]?\s*ache|abdominal pain|belly pain|tummy ache|stomach cramps|cramps)\b|"
+    r"\b(stomach|abdomen|abdominal|belly|tummy)\b.{0,24}\b(hurt|hurts|hurting|ache|aches|aching|pain|paining)\b|"
+    r"\b(hurt|hurts|hurting|ache|aches|aching|pain|paining)\b.{0,24}\b(stomach|abdomen|abdominal|belly|tummy)\b",
     re.IGNORECASE,
 )
 _ABDOMINAL_REDFLAG_PATTERNS: list[tuple[re.Pattern[str], str]] = [

@@ -130,3 +130,46 @@ def test_ai_chat_escalation_owner_reply_roundtrip(client: TestClient):
     history = client.get("/ai/chat/my", headers=headers)
     assert history.status_code == 200
     assert any(item.get("owner_reply") for item in history.json())
+
+
+@pytest.mark.parametrize(
+    ("message", "expected_intent"),
+    [
+        ("hello my head hurts", "HEADACHE_TRIAGE_SEVERITY"),
+        ("my head hurts", "HEADACHE_TRIAGE_SEVERITY"),
+        ("my stomach is hurting", "ABDOMINAL_TRIAGE_SEVERITY"),
+    ],
+)
+def test_casual_symptom_messages_enter_triage(client: TestClient, message: str, expected_intent: str):
+    import os
+
+    os.environ["AI_PROVIDER"] = "stub"
+    from app.ai.provider_factory import get_ai_provider
+
+    get_ai_provider.cache_clear()
+
+    db = TestingSessionLocal()
+    try:
+        db.add(
+            models.Pharmacy(
+                name="Sunrise",
+                domain="sunrise.local",
+                status="APPROVED",
+                is_active=True,
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.post(
+        "/ai/chat",
+        headers={"X-Pharmacy-Domain": "sunrise.local", "X-Chat-ID": f"chat-{expected_intent}"},
+        json={"message": message},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["intent"] == expected_intent
+    assert "scale of 1-10" in body["answer"]
+    assert body["quick_replies"]
