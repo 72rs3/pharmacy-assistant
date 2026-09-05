@@ -20,6 +20,12 @@ services:
         value: ^https://pharmacy-assistant-demo\.onrender\.com$
       - key: APP_PUBLIC_BASE_URL
         value: https://pharmacy-assistant-demo.onrender.com
+      - key: DEFAULT_PHARMACY_DOMAIN
+        value: pharmacy-assistant-demo.onrender.com
+      - key: DEFAULT_PHARMACY_NAME
+        value: Sunr Pharmacy
+      - key: DEFAULT_PHARMACY_AUTO_APPROVE
+        value: "true"
       - key: PHARMACY_ADMIN_EMAIL
         sync: false
       - key: PHARMACY_ADMIN_PASSWORD
