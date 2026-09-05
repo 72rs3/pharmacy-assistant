@@ -114,14 +114,15 @@ def get_public_pharmacy(
     if not domain:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pharmacy not found")
 
-    normalized = _normalize_domain(domain)
-    pharmacy = db.query(models.Pharmacy).filter(models.Pharmacy.domain == normalized).first()
-    if pharmacy is not None:
-        return pharmacy
     if pharmacy_slug:
         pharmacy = _find_pharmacy_by_slug(db, pharmacy_slug)
         if pharmacy is not None:
             return pharmacy
+
+    normalized = _normalize_domain(domain)
+    pharmacy = db.query(models.Pharmacy).filter(models.Pharmacy.domain == normalized).first()
+    if pharmacy is not None:
+        return pharmacy
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pharmacy not found")
 
 

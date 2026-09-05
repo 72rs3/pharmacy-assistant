@@ -86,3 +86,38 @@ def test_domain_header_rejects_inactive_or_pending_tenant(client: TestClient):
 
     response = client.get("/medicines/", headers={"X-Pharmacy-Domain": "pending.local"})
     assert response.status_code == 404
+
+
+def test_slug_header_overrides_shared_portal_host(client: TestClient):
+    db = TestingSessionLocal()
+    try:
+        db.add_all(
+            [
+                models.Pharmacy(
+                    name="Sunrise Pharmacy",
+                    status="APPROVED",
+                    is_active=True,
+                    domain="pharmacy-assistant-demo.onrender.com",
+                ),
+                models.Pharmacy(
+                    name="Faysal Pharmacy",
+                    status="APPROVED",
+                    is_active=True,
+                    domain="faysal.localhost",
+                ),
+            ]
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.get(
+        "/pharmacies/current",
+        headers={
+            "X-Pharmacy-Domain": "pharmacy-assistant-demo.onrender.com",
+            "X-Pharmacy-Slug": "faysal",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["name"] == "Faysal Pharmacy"
