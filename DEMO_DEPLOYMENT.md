@@ -11,14 +11,18 @@ The demo container uses `Dockerfile.demo` and the Render Blueprint in `render.ya
 
 - App hosting: Render Free Web Service
 - Runtime: Docker
-- Database: Supabase Free Postgres, recommended
+- Database: SQLite inside the demo container by default
 - Public URL: `https://pharmacy-assistant-demo.onrender.com`, unless Render changes the service slug
 - File uploads: local container storage for demo only
 
 Render Free services sleep after inactivity, so the first request can take about a minute to wake up.
-Local uploads are ephemeral on free Render services and can disappear after redeploys or restarts.
+The demo database and local uploads are ephemeral on free Render services and can disappear after redeploys or restarts.
 
-## 1. Create A Free Supabase Database
+## 1. Optional: Create A Free Supabase Database
+
+The default free demo uses SQLite inside the Render container so there is no external database setup.
+
+For a longer-lived demo, create a Supabase project and add `DATABASE_URL` to Render.
 
 1. Create a Supabase project.
 2. Open Project Settings, then Database.
@@ -56,7 +60,6 @@ https://dashboard.render.com/blueprint/new?repo=https://github.com/72rs3/pharmac
 Fill these required secret values in Render:
 
 ```text
-DATABASE_URL
 PHARMACY_ADMIN_EMAIL
 PHARMACY_ADMIN_PASSWORD
 OPENROUTER_API_KEY

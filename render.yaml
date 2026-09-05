@@ -10,10 +10,8 @@ services:
     dockerfilePath: ./Dockerfile.demo
     healthCheckPath: /healthz
     envVars:
-      - key: DATABASE_URL
-        sync: false
       - key: DB_AUTO_CREATE
-        value: "0"
+        value: "1"
       - key: SECRET_KEY
         generateValue: true
       - key: CORS_ORIGINS
