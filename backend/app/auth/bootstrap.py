@@ -29,7 +29,7 @@ def ensure_admin_user(db: Session | None = None) -> bool:
         existing_admin = (
             session.query(models.User).filter(models.User.is_admin.is_(True)).first()
         )
-        if existing_admin:
+        if existing_admin and existing_admin.email != email:
             return False
 
         existing_user = session.query(models.User).filter(models.User.email == email).first()
