@@ -1,9 +1,10 @@
 import os
+from datetime import date, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
-from sqlalchemy import text
+from sqlalchemy import Date, DateTime, text
 from sqlalchemy.orm import Session
 
 from app import models
@@ -58,6 +59,30 @@ def _table_for_name(name: str):
     return table
 
 
+def _coerce_value(value: Any, column) -> Any:
+    if value is None:
+        return None
+    if isinstance(column.type, DateTime) and isinstance(value, str):
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).replace(tzinfo=None)
+    if isinstance(column.type, Date) and isinstance(value, str):
+        return date.fromisoformat(value)
+    if column.name == "embedding" and isinstance(value, str):
+        raw = value.strip().strip("[]")
+        if not raw:
+            return []
+        return [float(part) for part in raw.split(",")]
+    return value
+
+
+def _clean_row(row: dict[str, Any], table) -> dict[str, Any]:
+    cleaned = {}
+    for key, value in row.items():
+        if key not in table.c:
+            continue
+        cleaned[key] = _coerce_value(value, table.c[key])
+    return cleaned
+
+
 @router.post("")
 def import_demo_data(
     payload: DemoImportPayload,
@@ -87,11 +112,7 @@ def import_demo_data(
                 continue
 
             table = _table_for_name(name)
-            columns = set(table.c.keys())
-            cleaned = [
-                {key: value for key, value in row.items() if key in columns}
-                for row in rows
-            ]
+            cleaned = [_clean_row(row, table) for row in rows]
             if cleaned:
                 db.execute(table.insert(), cleaned)
                 imported[name] = len(cleaned)
