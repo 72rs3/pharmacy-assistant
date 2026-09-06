@@ -54,44 +54,6 @@ def _json_default(value: object) -> str:
     return str(value)
 
 
-def _deterministic_inventory_response(tool_context: ToolContext, items: list[dict[str, Any]]) -> GeneratedResponse | None:
-    if tool_context.intent not in {"MEDICINE_SEARCH", "PRODUCT_SEARCH"} or not items:
-        return None
-
-    parts: list[str] = []
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        name = str(item.get("name") or "").strip()
-        if not name:
-            continue
-        stock = item.get("stock")
-        availability = item.get("availability")
-        if availability is None and stock is not None:
-            try:
-                availability = "available" if int(stock) > 0 else "out of stock"
-            except Exception:
-                availability = None
-        rx_note = " Prescription upload is required." if item.get("rx") else ""
-        if availability:
-            parts.append(f"{name} is {availability}.{rx_note}")
-        else:
-            parts.append(f"I found {name}.{rx_note}")
-
-    if not parts:
-        return None
-
-    return GeneratedResponse(
-        answer=" ".join(parts),
-        language=tool_context.language if tool_context.language in {"en", "ar", "fr"} else "en",
-        confidence=0.9,
-        citations=[],
-        actions=[],
-        quick_replies=tool_context.quick_replies or [],
-        escalated=bool(tool_context.escalated),
-    )
-
-
 async def _call_model(model: str, *, tool_context: dict, user_message: str, max_tokens: int) -> GeneratedResponse:
     system = (
         "You are a careful pharmacist assistant (not a doctor).\n"
@@ -137,9 +99,12 @@ async def generate_answer(
 ) -> GeneratedResponse:
     main_model = (os.getenv("OPENROUTER_MAIN_MODEL") or "").strip() or (os.getenv("OPENROUTER_CHAT_MODEL") or "").strip()
     fallback_model = (os.getenv("OPENROUTER_FALLBACK_MODEL") or "").strip() or (os.getenv("OPENROUTER_CHAT_MODEL") or "").strip()
+    is_stub_mode = (os.getenv("AI_PROVIDER") or "").strip().lower() == "stub"
+    if is_stub_mode and not main_model and not fallback_model:
+        main_model = "stub"
 
     items = tool_context.items or []
-    if tool_context.intent in {"MEDICINE_SEARCH", "PRODUCT_SEARCH"} and items:
+    if not is_stub_mode and tool_context.intent in {"MEDICINE_SEARCH", "PRODUCT_SEARCH"} and items:
         redacted = []
         for item in items:
             if not isinstance(item, dict):
@@ -155,10 +120,6 @@ async def generate_answer(
                 next_item["availability"] = availability
             redacted.append(next_item)
         items = redacted
-
-    deterministic = _deterministic_inventory_response(tool_context, items)
-    if deterministic is not None:
-        return deterministic
 
     ctx_dict = {
         "intent": tool_context.intent,

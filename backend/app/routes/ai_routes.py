@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+import json
+import os
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
@@ -16,6 +18,8 @@ from app.chat_sessions import add_message, get_or_create_session
 from app.ai.tri_model_router import RouterIntent, route_intent
 from app.ai.tool_executor import build_tool_context
 from app.ai.generator import generate_answer
+from app.ai.openrouter_client import openrouter_chat
+from app.ai.providers.base import ChatMessage
 from app.config.rag import get_rag_config
 from app.auth.deps import require_admin, require_approved_owner
 from app.db import get_db
@@ -303,6 +307,57 @@ def _filter_quick_replies(actions: list[schemas.AIAction] | None, quick_replies:
     return out
 
 
+async def _rewrite_triage_answer(
+    *,
+    user_text: str,
+    intent: str,
+    safe_answer: str,
+    quick_replies: list[str] | None,
+    triage: dict | None,
+) -> tuple[str, float]:
+    if (os.getenv("AI_PROVIDER") or "").strip().lower() == "stub":
+        return safe_answer, 0.0
+
+    model = (os.getenv("OPENROUTER_MAIN_MODEL") or "").strip() or (os.getenv("OPENROUTER_CHAT_MODEL") or "").strip()
+    if not model:
+        return safe_answer, 0.0
+
+    system = (
+        "You are a careful pharmacy assistant chatting with a customer.\n"
+        "Rewrite the provided SAFE_ANSWER into a natural WhatsApp-style response.\n"
+        "You must preserve the same medical meaning, safety level, question being asked, and urgency.\n"
+        "Do not diagnose. Do not recommend prescription medicine. Do not invent pharmacy data.\n"
+        "Do not mention stock counts. If medicine search is suggested, keep it generic or use the provided quick replies.\n"
+        "Keep it concise: 1-3 short sentences.\n"
+        "Return STRICT JSON only: {\"answer\": string, \"confidence\": number}."
+    )
+    prompt = (
+        f"USER_MESSAGE: {user_text}\n"
+        f"INTENT: {intent}\n"
+        f"TRIAGE_STATE: {triage or {}}\n"
+        f"QUICK_REPLIES: {quick_replies or []}\n"
+        f"SAFE_ANSWER: {safe_answer}"
+    )
+    try:
+        raw = await openrouter_chat(
+            model=model,
+            messages=[ChatMessage(role="system", content=system), ChatMessage(role="user", content=prompt)],
+            temperature=float(os.getenv("OPENROUTER_TEMPERATURE", "0.2")),
+            max_tokens=min(int(os.getenv("OPENROUTER_MAX_TOKENS", "400")), 220),
+        )
+        match = re.search(r"\{.*\}", raw or "", re.DOTALL)
+        if not match:
+            return safe_answer, 0.0
+        data = json.loads(match.group(0))
+        answer = str(data.get("answer") or "").strip()
+        if not answer:
+            return safe_answer, 0.0
+        confidence = float(data.get("confidence") or 0.75)
+        return answer, max(0.0, min(confidence, 1.0))
+    except Exception:
+        return safe_answer, 0.0
+
+
 def _top_medicine_names(db: Session, pharmacy_id: int, limit: int = 6) -> list[str]:
     rows = (
         db.query(models.Medicine)
@@ -472,7 +527,7 @@ def _maybe_handle_last_medicines(
     )
 
 
-def _maybe_handle_headache_triage(db: Session, pharmacy_id: int, customer_id: str, session: models.ChatSession, user_text: str):
+async def _maybe_handle_headache_triage(db: Session, pharmacy_id: int, customer_id: str, session: models.ChatSession, user_text: str):
     triage_action = schemas.AIAction(type="escalate_to_pharmacist", label="Talk to pharmacist")
 
     last_ai = (
@@ -496,13 +551,14 @@ def _maybe_handle_headache_triage(db: Session, pharmacy_id: int, customer_id: st
 
     red_flags_now = _headache_red_flags(user_text)
 
-    def respond(text: str, *, intent: str, quick_replies: list[str] | None = None, triage: dict | None = None):
+    async def respond(text: str, *, intent: str, quick_replies: list[str] | None = None, triage: dict | None = None):
+        text, rewrite_confidence = await _rewrite_triage_answer(user_text=user_text, intent=intent, safe_answer=text, quick_replies=quick_replies, triage=triage)
         filtered_quick_replies = _filter_quick_replies([triage_action], quick_replies)
         interaction = models.AIInteraction(
             customer_id=customer_id,
             customer_query=user_text,
             ai_response=text,
-            confidence_score=0.0,
+            confidence_score=rewrite_confidence,
             escalated_to_human=False,
             created_at=datetime.utcnow(),
             pharmacy_id=pharmacy_id,
@@ -547,7 +603,7 @@ def _maybe_handle_headache_triage(db: Session, pharmacy_id: int, customer_id: st
         )
 
     if red_flags_now:
-        return respond(
+        return await respond(
             (
                 "Your symptoms may need urgent medical attention. "
                 "Please start a pharmacist consultation now, and if this feels severe or sudden, seek emergency care."
@@ -559,13 +615,13 @@ def _maybe_handle_headache_triage(db: Session, pharmacy_id: int, customer_id: st
     if last_intent == "HEADACHE_TRIAGE_SEVERITY":
         severity = _parse_severity_bucket(user_text)
         if severity is None:
-            return respond(
+            return await respond(
                 "On a scale of 1-10, how severe is your headache right now? (1 = mild, 10 = worst)",
                 intent="HEADACHE_TRIAGE_SEVERITY",
                 quick_replies=["1-3 (mild)", "4-7 (moderate)", "8-10 (severe)"],
             )
         next_triage = {**prior_triage, "topic": "headache", "severity": severity}
-        return respond(
+        return await respond(
             "How long have you had this headache?",
             intent="HEADACHE_TRIAGE_DURATION",
             quick_replies=["<1 day", "1-3 days", ">3 days", "Getting worse"],
@@ -575,13 +631,13 @@ def _maybe_handle_headache_triage(db: Session, pharmacy_id: int, customer_id: st
     if last_intent == "HEADACHE_TRIAGE_DURATION":
         bucket = _parse_duration_bucket(user_text)
         if not bucket:
-            return respond(
+            return await respond(
                 "How long have you had this headache?",
                 intent="HEADACHE_TRIAGE_DURATION",
                 quick_replies=["<1 day", "1-3 days", ">3 days", "Getting worse"],
             )
         next_triage = {**prior_triage, "topic": "headache", "duration": bucket}
-        return respond(
+        return await respond(
             (
                 "Do you have any of these right now: fever, stiff neck, vision changes, confusion/fainting, "
                 "weakness/numbness, or a recent head injury?"
@@ -594,7 +650,7 @@ def _maybe_handle_headache_triage(db: Session, pharmacy_id: int, customer_id: st
     if last_intent == "HEADACHE_TRIAGE_REDFLAGS":
         has_flags = _is_affirmative(user_text) and not _is_negative(user_text)
         if has_flags:
-            return respond(
+            return await respond(
                 (
                     "Thanks — those symptoms can be serious. Please start a pharmacist consultation now. "
                     "If this is urgent or worsening, seek medical care immediately."
@@ -603,7 +659,7 @@ def _maybe_handle_headache_triage(db: Session, pharmacy_id: int, customer_id: st
                 quick_replies=[],
             )
         if not _is_negative(user_text):
-            return respond(
+            return await respond(
                 (
                     "Do you have any of these right now: fever, stiff neck, vision changes, confusion/fainting, "
                     "weakness/numbness, or a recent head injury?"
@@ -623,7 +679,7 @@ def _maybe_handle_headache_triage(db: Session, pharmacy_id: int, customer_id: st
         duration_bucket = str(prior_triage.get("duration") or "")
 
         if severity_label == "severe" or (severity_score is not None and severity_score >= 8) or duration_bucket == ">3 days":
-            return respond(
+            return await respond(
                 (
                     "Because your headache is severe or has lasted longer than a couple of days, it's best to speak with a pharmacist. "
                     "In the meantime: rest, drink water, and avoid bright screens. If symptoms worsen, become sudden/severe, or you develop "
@@ -634,7 +690,7 @@ def _maybe_handle_headache_triage(db: Session, pharmacy_id: int, customer_id: st
             )
 
         if severity_label == "moderate" or (severity_score is not None and 4 <= severity_score <= 7):
-            return respond(
+            return await respond(
                 (
                     "For moderate headaches without warning signs: rest, drink water, and avoid triggers like bright screens. "
                     "If you'd like, you can check common OTC options (for example, paracetamol) and follow the label. "
@@ -644,7 +700,7 @@ def _maybe_handle_headache_triage(db: Session, pharmacy_id: int, customer_id: st
                 quick_replies=["Search panadol"],
             )
 
-        return respond(
+        return await respond(
             (
                 "For mild headaches with no concerning symptoms: rest, drink water, and avoid bright screens. "
                 "If you want, you can look for common OTC options (e.g., paracetamol) - always follow the label. "
@@ -654,14 +710,14 @@ def _maybe_handle_headache_triage(db: Session, pharmacy_id: int, customer_id: st
             quick_replies=["Search panadol"],
         )
 
-    return respond(
+    return await respond(
         "On a scale of 1-10, how severe is your headache right now? (1 = mild, 10 = worst)",
         intent="HEADACHE_TRIAGE_SEVERITY",
         quick_replies=["1-3 (mild)", "4-7 (moderate)", "8-10 (severe)"],
     )
 
 
-def _maybe_handle_abdominal_pain_triage(
+async def _maybe_handle_abdominal_pain_triage(
     db: Session,
     pharmacy_id: int,
     customer_id: str,
@@ -691,13 +747,14 @@ def _maybe_handle_abdominal_pain_triage(
 
     red_flags_now = _abdominal_red_flags(user_text)
 
-    def respond(text: str, *, intent: str, quick_replies: list[str] | None = None, triage: dict | None = None):
+    async def respond(text: str, *, intent: str, quick_replies: list[str] | None = None, triage: dict | None = None):
+        text, rewrite_confidence = await _rewrite_triage_answer(user_text=user_text, intent=intent, safe_answer=text, quick_replies=quick_replies, triage=triage)
         filtered_quick_replies = _filter_quick_replies([triage_action], quick_replies)
         interaction = models.AIInteraction(
             customer_id=customer_id,
             customer_query=user_text,
             ai_response=text,
-            confidence_score=0.0,
+            confidence_score=rewrite_confidence,
             escalated_to_human=False,
             created_at=datetime.utcnow(),
             pharmacy_id=pharmacy_id,
@@ -742,7 +799,7 @@ def _maybe_handle_abdominal_pain_triage(
         )
 
     if red_flags_now:
-        return respond(
+        return await respond(
             (
                 "Your symptoms may need urgent medical attention. Please start a pharmacist consultation now. "
                 "If you have severe pain, bleeding, fainting, or rapidly worsening symptoms, seek emergency care."
@@ -754,13 +811,13 @@ def _maybe_handle_abdominal_pain_triage(
     if last_intent == "ABDOMINAL_TRIAGE_SEVERITY":
         severity = _parse_severity_bucket(user_text)
         if severity is None:
-            return respond(
+            return await respond(
                 "On a scale of 1-10, how severe is your stomach/abdominal pain right now? (1 = mild, 10 = worst)",
                 intent="ABDOMINAL_TRIAGE_SEVERITY",
                 quick_replies=["1-3 (mild)", "4-7 (moderate)", "8-10 (severe)"],
             )
         next_triage = {**prior_triage, "topic": "abdominal", "severity": severity}
-        return respond(
+        return await respond(
             "How long have you had this pain?",
             intent="ABDOMINAL_TRIAGE_DURATION",
             quick_replies=["<1 day", "1-3 days", ">3 days", "Getting worse"],
@@ -770,13 +827,13 @@ def _maybe_handle_abdominal_pain_triage(
     if last_intent == "ABDOMINAL_TRIAGE_DURATION":
         bucket = _parse_duration_bucket(user_text)
         if not bucket:
-            return respond(
+            return await respond(
                 "How long have you had this pain?",
                 intent="ABDOMINAL_TRIAGE_DURATION",
                 quick_replies=["<1 day", "1-3 days", ">3 days", "Getting worse"],
             )
         next_triage = {**prior_triage, "topic": "abdominal", "duration": bucket}
-        return respond(
+        return await respond(
             (
                 "Any of these right now: fever, vomiting repeatedly, blood in vomit/stool, black stools, "
                 "fainting/confusion, pregnancy, or severe worsening pain?"
@@ -789,7 +846,7 @@ def _maybe_handle_abdominal_pain_triage(
     if last_intent == "ABDOMINAL_TRIAGE_REDFLAGS":
         has_flags = _is_affirmative(user_text) and not _is_negative(user_text)
         if has_flags:
-            return respond(
+            return await respond(
                 (
                     "Thanks — those symptoms can be serious. Please start a pharmacist consultation now. "
                     "If symptoms are severe or worsening, seek medical care immediately."
@@ -798,7 +855,7 @@ def _maybe_handle_abdominal_pain_triage(
                 quick_replies=[],
             )
         if not _is_negative(user_text):
-            return respond(
+            return await respond(
                 (
                     "Any of these right now: fever, vomiting repeatedly, blood in vomit/stool, black stools, "
                     "fainting/confusion, pregnancy, or severe worsening pain?"
@@ -818,7 +875,7 @@ def _maybe_handle_abdominal_pain_triage(
         duration_bucket = str(prior_triage.get("duration") or "")
 
         if severity_label == "severe" or (severity_score is not None and severity_score >= 8) or duration_bucket == ">3 days":
-            return respond(
+            return await respond(
                 (
                     "Because your abdominal pain is severe or has lasted more than a couple of days, it's best to speak with a pharmacist. "
                     "If symptoms worsen or you develop warning signs (fever, repeated vomiting, blood/black stools, fainting/confusion), seek urgent medical care."
@@ -828,7 +885,7 @@ def _maybe_handle_abdominal_pain_triage(
             )
 
         if severity_label == "moderate" or (severity_score is not None and 4 <= severity_score <= 7):
-            return respond(
+            return await respond(
                 (
                     "For moderate abdominal discomfort with no warning signs: sip water, eat light foods, and rest. "
                     "If it doesn't improve, keeps returning, or you're unsure, please talk to a pharmacist."
@@ -837,7 +894,7 @@ def _maybe_handle_abdominal_pain_triage(
                 quick_replies=[],
             )
 
-        return respond(
+        return await respond(
             (
                 "For mild abdominal discomfort with no red flags: sip water, eat light foods, and rest. "
                 "If symptoms persist, worsen, or you're unsure, please talk to a pharmacist."
@@ -846,14 +903,14 @@ def _maybe_handle_abdominal_pain_triage(
             quick_replies=[],
         )
 
-    return respond(
+    return await respond(
         "On a scale of 1-10, how severe is your stomach/abdominal pain right now? (1 = mild, 10 = worst)",
         intent="ABDOMINAL_TRIAGE_SEVERITY",
         quick_replies=["1-3 (mild)", "4-7 (moderate)", "8-10 (severe)"],
     )
 
 
-def _maybe_handle_msk_pain_triage(
+async def _maybe_handle_msk_pain_triage(
     db: Session,
     pharmacy_id: int,
     customer_id: str,
@@ -881,13 +938,14 @@ def _maybe_handle_msk_pain_triage(
     if not is_in_flow and not is_new:
         return None
 
-    def respond(text: str, *, intent: str, quick_replies: list[str] | None = None, triage: dict | None = None):
+    async def respond(text: str, *, intent: str, quick_replies: list[str] | None = None, triage: dict | None = None):
+        text, rewrite_confidence = await _rewrite_triage_answer(user_text=user_text, intent=intent, safe_answer=text, quick_replies=quick_replies, triage=triage)
         filtered_quick_replies = _filter_quick_replies([triage_action], quick_replies)
         interaction = models.AIInteraction(
             customer_id=customer_id,
             customer_query=user_text,
             ai_response=text,
-            confidence_score=0.0,
+            confidence_score=rewrite_confidence,
             escalated_to_human=False,
             created_at=datetime.utcnow(),
             pharmacy_id=pharmacy_id,
@@ -928,14 +986,14 @@ def _maybe_handle_msk_pain_triage(
     if last_intent == "MSK_TRIAGE_SEVERITY" or is_new:
         severity = _parse_severity_bucket(user_text) if last_intent == "MSK_TRIAGE_SEVERITY" else None
         if severity is None:
-            return respond(
+            return await respond(
                 "On a scale of 1-10, how severe is your pain right now? (1 = mild, 10 = worst)",
                 intent="MSK_TRIAGE_SEVERITY",
                 quick_replies=["1-3 (mild)", "4-7 (moderate)", "8-10 (severe)"],
                 triage={**prior_triage, "topic": "msk"},
             )
         next_triage = {**prior_triage, "topic": "msk", "severity": severity}
-        return respond(
+        return await respond(
             "How long have you had this pain?",
             intent="MSK_TRIAGE_DURATION",
             quick_replies=["<1 day", "1-3 days", ">3 days", "Getting worse"],
@@ -945,14 +1003,14 @@ def _maybe_handle_msk_pain_triage(
     if last_intent == "MSK_TRIAGE_DURATION":
         bucket = _parse_duration_bucket(user_text)
         if not bucket:
-            return respond(
+            return await respond(
                 "How long have you had this pain?",
                 intent="MSK_TRIAGE_DURATION",
                 quick_replies=["<1 day", "1-3 days", ">3 days", "Getting worse"],
                 triage=prior_triage,
             )
         next_triage = {**prior_triage, "topic": "msk", "duration": bucket}
-        return respond(
+        return await respond(
             "Did this start after an injury or accident (fall/twist), or is there noticeable swelling/redness?",
             intent="MSK_TRIAGE_INJURY",
             quick_replies=["No", "Yes"],
@@ -962,7 +1020,7 @@ def _maybe_handle_msk_pain_triage(
     if last_intent == "MSK_TRIAGE_INJURY":
         injury = _is_affirmative(user_text) and not _is_negative(user_text)
         next_triage = {**prior_triage, "topic": "msk", "injury": bool(injury)}
-        return respond(
+        return await respond(
             "Any of these right now: severe swelling/deformity, inability to move or bear weight, numbness/weakness, fever, or an open wound?",
             intent="MSK_TRIAGE_REDFLAGS",
             quick_replies=["No", "Yes"],
@@ -972,7 +1030,7 @@ def _maybe_handle_msk_pain_triage(
     if last_intent == "MSK_TRIAGE_REDFLAGS":
         has_flags = _is_affirmative(user_text) and not _is_negative(user_text)
         if has_flags:
-            return respond(
+            return await respond(
                 (
                     "Those symptoms can be serious. Please start a pharmacist consultation now. "
                     "If there is severe injury, uncontrolled bleeding, or you can't move the limb, seek urgent medical care."
@@ -994,7 +1052,7 @@ def _maybe_handle_msk_pain_triage(
                 severity_score = None
 
         if severity_label == "severe" or (severity_score is not None and severity_score >= 8) or duration_bucket == ">3 days" or injury:
-            return respond(
+            return await respond(
                 (
                     "Because the pain is severe, persistent, or started after an injury, it's best to speak with a pharmacist. "
                     "In the meantime: rest the area, avoid activities that worsen it, and consider cold packs for short periods. "
@@ -1005,7 +1063,7 @@ def _maybe_handle_msk_pain_triage(
                 triage=prior_triage,
             )
         if severity_label == "moderate" or (severity_score is not None and 4 <= severity_score <= 7):
-            return respond(
+            return await respond(
                 (
                     "For moderate pain with no warning signs: rest the area, avoid overuse, and consider cold packs for short periods. "
                     "If it doesn't improve, keeps returning, or you're unsure what to take, please talk to a pharmacist."
@@ -1014,7 +1072,7 @@ def _maybe_handle_msk_pain_triage(
                 quick_replies=["Search paracetamol"],
                 triage=prior_triage,
             )
-        return respond(
+        return await respond(
             (
                 "For mild pain with no warning signs: rest the area and avoid overuse. "
                 "If it worsens or doesn't improve, please talk to a pharmacist."
@@ -1024,7 +1082,7 @@ def _maybe_handle_msk_pain_triage(
             triage=prior_triage,
         )
 
-    return respond(
+    return await respond(
         "On a scale of 1-10, how severe is your pain right now? (1 = mild, 10 = worst)",
         intent="MSK_TRIAGE_SEVERITY",
         quick_replies=["1-3 (mild)", "4-7 (moderate)", "8-10 (severe)"],
@@ -1032,7 +1090,7 @@ def _maybe_handle_msk_pain_triage(
     )
 
 
-def _maybe_handle_diarrhea_triage(
+async def _maybe_handle_diarrhea_triage(
     db: Session,
     pharmacy_id: int,
     customer_id: str,
@@ -1060,13 +1118,14 @@ def _maybe_handle_diarrhea_triage(
     if not is_in_flow and not is_new:
         return None
 
-    def respond(text: str, *, intent: str, quick_replies: list[str] | None = None, triage: dict | None = None):
+    async def respond(text: str, *, intent: str, quick_replies: list[str] | None = None, triage: dict | None = None):
+        text, rewrite_confidence = await _rewrite_triage_answer(user_text=user_text, intent=intent, safe_answer=text, quick_replies=quick_replies, triage=triage)
         filtered_quick_replies = _filter_quick_replies([triage_action], quick_replies)
         interaction = models.AIInteraction(
             customer_id=customer_id,
             customer_query=user_text,
             ai_response=text,
-            confidence_score=0.0,
+            confidence_score=rewrite_confidence,
             escalated_to_human=False,
             created_at=datetime.utcnow(),
             pharmacy_id=pharmacy_id,
@@ -1107,14 +1166,14 @@ def _maybe_handle_diarrhea_triage(
     if last_intent == "DIARRHEA_TRIAGE_DURATION" or is_new:
         bucket = _parse_duration_bucket(user_text) if last_intent == "DIARRHEA_TRIAGE_DURATION" else None
         if bucket is None:
-            return respond(
+            return await respond(
                 "How long have you had diarrhea?",
                 intent="DIARRHEA_TRIAGE_DURATION",
                 quick_replies=["<1 day", "1-3 days", ">3 days", "Getting worse"],
                 triage={**prior_triage, "topic": "diarrhea"},
             )
         next_triage = {**prior_triage, "topic": "diarrhea", "duration": bucket}
-        return respond(
+        return await respond(
             "Any of these right now: blood in stool, fever, severe abdominal pain, or signs of dehydration (very thirsty, dizziness, not urinating)?",
             intent="DIARRHEA_TRIAGE_REDFLAGS",
             quick_replies=["No", "Yes"],
@@ -1124,7 +1183,7 @@ def _maybe_handle_diarrhea_triage(
     if last_intent == "DIARRHEA_TRIAGE_REDFLAGS":
         has_flags = _is_affirmative(user_text) and not _is_negative(user_text)
         if has_flags:
-            return respond(
+            return await respond(
                 (
                     "Those symptoms can be serious. Please start a pharmacist consultation now. "
                     "If symptoms are severe or worsening, seek urgent medical care."
@@ -1135,7 +1194,7 @@ def _maybe_handle_diarrhea_triage(
             )
         duration_bucket = str(prior_triage.get("duration") or "")
         if duration_bucket in {">3 days"}:
-            return respond(
+            return await respond(
                 (
                     "Because it has lasted several days, it's best to speak with a pharmacist. "
                     "Until then: drink fluids frequently (oral rehydration if available) and eat light foods. "
@@ -1145,7 +1204,7 @@ def _maybe_handle_diarrhea_triage(
                 quick_replies=[],
                 triage=prior_triage,
             )
-        return respond(
+        return await respond(
             (
                 "For mild diarrhea with no warning signs: drink fluids frequently (oral rehydration if available) and eat light foods. "
                 "If it worsens, doesn't improve, or you're unsure, please talk to a pharmacist."
@@ -1155,7 +1214,7 @@ def _maybe_handle_diarrhea_triage(
             triage=prior_triage,
         )
 
-    return respond(
+    return await respond(
         "How long have you had diarrhea?",
         intent="DIARRHEA_TRIAGE_DURATION",
         quick_replies=["<1 day", "1-3 days", ">3 days", "Getting worse"],
@@ -1163,7 +1222,7 @@ def _maybe_handle_diarrhea_triage(
     )
 
 
-def _maybe_handle_dizzy_triage(
+async def _maybe_handle_dizzy_triage(
     db: Session,
     pharmacy_id: int,
     customer_id: str,
@@ -1191,13 +1250,14 @@ def _maybe_handle_dizzy_triage(
     if not is_in_flow and not is_new:
         return None
 
-    def respond(text: str, *, intent: str, quick_replies: list[str] | None = None, triage: dict | None = None):
+    async def respond(text: str, *, intent: str, quick_replies: list[str] | None = None, triage: dict | None = None):
+        text, rewrite_confidence = await _rewrite_triage_answer(user_text=user_text, intent=intent, safe_answer=text, quick_replies=quick_replies, triage=triage)
         filtered_quick_replies = _filter_quick_replies([triage_action], quick_replies)
         interaction = models.AIInteraction(
             customer_id=customer_id,
             customer_query=user_text,
             ai_response=text,
-            confidence_score=0.0,
+            confidence_score=rewrite_confidence,
             escalated_to_human=False,
             created_at=datetime.utcnow(),
             pharmacy_id=pharmacy_id,
@@ -1237,7 +1297,7 @@ def _maybe_handle_dizzy_triage(
 
     if last_intent == "DIZZY_TRIAGE_REDFLAGS" or is_new:
         if last_intent != "DIZZY_TRIAGE_REDFLAGS":
-            return respond(
+            return await respond(
                 (
                     "Do you have any of these right now: fainting, chest pain, trouble breathing, severe headache, "
                     "confusion, weakness/numbness, or uncontrolled bleeding?"
@@ -1248,7 +1308,7 @@ def _maybe_handle_dizzy_triage(
             )
         has_flags = _is_affirmative(user_text) and not _is_negative(user_text)
         if has_flags:
-            return respond(
+            return await respond(
                 (
                     "That can be urgent. Please seek medical care immediately. "
                     "If you can, you can also start a pharmacist consultation here."
@@ -1257,7 +1317,7 @@ def _maybe_handle_dizzy_triage(
                 quick_replies=[],
                 triage=prior_triage,
             )
-        return respond(
+        return await respond(
             "How long have you felt dizzy?",
             intent="DIZZY_TRIAGE_DURATION",
             quick_replies=["Just now", "<1 day", "1-3 days", ">3 days", "Getting worse"],
@@ -1270,7 +1330,7 @@ def _maybe_handle_dizzy_triage(
             if "just now" in (user_text or "").lower():
                 bucket = "<1 day"
         if not bucket:
-            return respond(
+            return await respond(
                 "How long have you felt dizzy?",
                 intent="DIZZY_TRIAGE_DURATION",
                 quick_replies=["Just now", "<1 day", "1-3 days", ">3 days", "Getting worse"],
@@ -1278,7 +1338,7 @@ def _maybe_handle_dizzy_triage(
             )
         duration_bucket = bucket
         if duration_bucket in {">3 days", "1-3 days"}:
-            return respond(
+            return await respond(
                 (
                     "Because it has lasted more than a day, it's best to speak with a pharmacist. "
                     "Until then: sit or lie down if you feel dizzy, drink fluids, and avoid driving. "
@@ -1288,7 +1348,7 @@ def _maybe_handle_dizzy_triage(
                 quick_replies=[],
                 triage={**prior_triage, "topic": "dizzy", "duration": duration_bucket},
             )
-        return respond(
+        return await respond(
             (
                 "For mild dizziness with no warning signs: sit or lie down, drink fluids, and avoid driving until you feel normal. "
                 "If it persists or you're unsure, please talk to a pharmacist."
@@ -1298,7 +1358,7 @@ def _maybe_handle_dizzy_triage(
             triage={**prior_triage, "topic": "dizzy", "duration": duration_bucket},
         )
 
-    return respond(
+    return await respond(
         (
             "Do you have any of these right now: fainting, chest pain, trouble breathing, severe headache, "
             "confusion, weakness/numbness, or uncontrolled bleeding?"
@@ -1532,23 +1592,23 @@ async def chat(
         if triage is not None:
             session_memory.append_turns(db, pharmacy_id, session_id, message, triage.answer)
             return triage
-        triage = _maybe_handle_headache_triage(db, pharmacy_id, customer_id, session, message)
+        triage = await _maybe_handle_headache_triage(db, pharmacy_id, customer_id, session, message)
         if triage is not None:
             session_memory.append_turns(db, pharmacy_id, session_id, message, triage.answer)
             return triage
-        triage = _maybe_handle_abdominal_pain_triage(db, pharmacy_id, customer_id, session, message)
+        triage = await _maybe_handle_abdominal_pain_triage(db, pharmacy_id, customer_id, session, message)
         if triage is not None:
             session_memory.append_turns(db, pharmacy_id, session_id, message, triage.answer)
             return triage
-        triage = _maybe_handle_diarrhea_triage(db, pharmacy_id, customer_id, session, message)
+        triage = await _maybe_handle_diarrhea_triage(db, pharmacy_id, customer_id, session, message)
         if triage is not None:
             session_memory.append_turns(db, pharmacy_id, session_id, message, triage.answer)
             return triage
-        triage = _maybe_handle_dizzy_triage(db, pharmacy_id, customer_id, session, message)
+        triage = await _maybe_handle_dizzy_triage(db, pharmacy_id, customer_id, session, message)
         if triage is not None:
             session_memory.append_turns(db, pharmacy_id, session_id, message, triage.answer)
             return triage
-        triage = _maybe_handle_msk_pain_triage(db, pharmacy_id, customer_id, session, message)
+        triage = await _maybe_handle_msk_pain_triage(db, pharmacy_id, customer_id, session, message)
         if triage is not None:
             session_memory.append_turns(db, pharmacy_id, session_id, message, triage.answer)
             return triage
