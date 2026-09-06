@@ -293,6 +293,32 @@ def test_session_memory_isolated_by_pharmacy(client: TestClient):
     assert "panadol" not in res_two.json()["answer"].lower()
 
 
+def test_short_price_followup_uses_last_medicine_context(client: TestClient):
+    os.environ["AI_PROVIDER"] = "stub"
+    os.environ["OPENROUTER_ROUTER_MODEL"] = "stub/router"
+    os.environ["OPENROUTER_MAIN_MODEL"] = "stub/main"
+    os.environ["OPENROUTER_FALLBACK_MODEL"] = "stub/fallback"
+    from app.ai.provider_factory import get_ai_provider
+
+    get_ai_provider.cache_clear()
+    seed_pharmacy()
+    headers = {"X-Pharmacy-Domain": "sunrise.local", "X-Chat-ID": "chat-price"}
+
+    first = client.post("/ai/chat", headers=headers, json={"message": "hello i need panadol"})
+    assert first.status_code == 200
+    assert first.json()["cards"]
+    assert first.json()["cards"][0]["name"].lower() == "panadol"
+
+    followup = client.post("/ai/chat", headers=headers, json={"message": "price?"})
+    assert followup.status_code == 200
+    payload = followup.json()
+    assert payload["intent"] == "MEDICINE_SEARCH"
+    assert "panadol" in payload["answer"].lower()
+    assert "5.00" in payload["answer"]
+    assert payload["cards"]
+    assert payload["cards"][0]["name"].lower() == "panadol"
+
+
 def test_medical_guardrails_risky_prompt(client: TestClient):
     os.environ["AI_PROVIDER"] = "stub"
     os.environ["OPENROUTER_ROUTER_MODEL"] = "stub/router"

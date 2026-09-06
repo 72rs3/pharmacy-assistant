@@ -321,6 +321,180 @@ def _update_last_search_results(turns: list[dict] | None, items: list[dict[str, 
         session_memory.set_state(turns, "last_search_results", {"items": stored})
 
 
+_CONTEXT_FOLLOWUP_WORDS = {
+    "add",
+    "available",
+    "availability",
+    "cart",
+    "cost",
+    "does",
+    "how",
+    "is",
+    "it",
+    "its",
+    "medicine",
+    "much",
+    "one",
+    "price",
+    "product",
+    "stock",
+    "that",
+    "the",
+    "this",
+    "what",
+}
+
+
+def _is_contextual_item_followup(text: str) -> bool:
+    cleaned = re.sub(r"[^\w\s]", " ", (text or "").lower())
+    words = [word for word in cleaned.split() if word]
+    if not words:
+        return False
+    if any(word in {"price", "cost", "much", "available", "availability", "stock"} for word in words):
+        return all(word in _CONTEXT_FOLLOWUP_WORDS for word in words)
+    return any(word in {"it", "this", "that", "one"} for word in words) and all(
+        word in _CONTEXT_FOLLOWUP_WORDS for word in words
+    )
+
+
+def _context_item_tool_context(
+    db: Session,
+    *,
+    pharmacy_id: int,
+    router: RouterIntent,
+    session_id: str | None,
+    turns: list[dict] | None,
+) -> tuple[ToolContext, list[schemas.AICitation], list[schemas.AIAction], str | None] | None:
+    if not turns or not _is_contextual_item_followup(router.query or ""):
+        return None
+
+    last_results = session_memory.get_state(turns, "last_search_results") or {}
+    stored_items = last_results.get("items") if isinstance(last_results, dict) else []
+    if not stored_items:
+        return None
+
+    item = stored_items[0]
+    item_type = str(item.get("type") or "medicine")
+    item_id = int(item.get("id") or 0)
+    if item_id <= 0:
+        return None
+
+    citations: list[schemas.AICitation] = []
+    actions: list[schemas.AIAction] = []
+
+    if item_type == "product":
+        product = (
+            db.query(models.Product)
+            .filter(models.Product.pharmacy_id == pharmacy_id, models.Product.id == item_id)
+            .first()
+        )
+        if not product:
+            return None
+        stock = int(product.stock_level or 0)
+        product_item = {
+            "id": int(product.id),
+            "name": product.name,
+            "category": product.category,
+            "price": float(product.price) if product.price is not None else None,
+            "stock": stock,
+            "image_url": product.image_url,
+            "rx": False,
+            "dosage": None,
+            "type": "product",
+        }
+        if stock > 0:
+            actions.append(
+                schemas.AIAction(
+                    type="add_to_cart",
+                    label=f"Add {product.name} to cart",
+                    medicine_id=None,
+                    product_id=int(product.id),
+                    payload={"product_id": int(product.id), "quantity": 1},
+                )
+            )
+        _update_last_items_state(turns, [product_item], kind="product")
+        _update_last_search_results(turns, [product_item], kind="product")
+        if session_id:
+            session_memory.save_turns(db, pharmacy_id, session_id, turns)
+        citations = [_system_citation("context_followup", f"last_product={product.name}")]
+        ctx = ToolContext(
+            intent="PRODUCT_SEARCH",
+            language=router.language,
+            found=True,
+            items=[product_item],
+            suggestions=[],
+            citations=[c.model_dump() for c in citations],
+            snippets=[],
+            cards=[],
+            quick_replies=_default_quick_replies(),
+            data_last_updated_at=product.updated_at,
+        )
+        immediate_answer = None
+        if stock > 0 and product.price is not None:
+            immediate_answer = f"{product.name} is available. Price: {float(product.price):.2f}."
+        return ctx, citations, actions, immediate_answer
+
+    medicine = (
+        db.query(models.Medicine)
+        .filter(models.Medicine.pharmacy_id == pharmacy_id, models.Medicine.id == item_id)
+        .first()
+    )
+    if not medicine:
+        return None
+
+    stock = int(medicine.stock_level or 0)
+    medicine_item = {
+        "id": int(medicine.id),
+        "name": medicine.name,
+        "dosage": medicine.dosage,
+        "rx": bool(medicine.prescription_required),
+        "price": float(medicine.price) if medicine.price is not None else None,
+        "stock": stock,
+        "updated_at": medicine.updated_at.isoformat() if medicine.updated_at else None,
+        "type": "medicine",
+    }
+    if stock > 0:
+        actions.append(
+            schemas.AIAction(
+                type="add_to_cart",
+                label=f"Add {medicine.name}",
+                medicine_id=int(medicine.id),
+                payload={
+                    "medicine_id": int(medicine.id),
+                    "quantity": 1,
+                    "requires_prescription": bool(medicine.prescription_required),
+                },
+            )
+        )
+    session_memory.set_state(
+        turns,
+        "last_item",
+        {"medicine_id": int(medicine.id), "name": str(medicine.name)},
+    )
+    _update_last_items_state(turns, [medicine_item], kind="medicine")
+    _update_last_search_results(turns, [medicine_item], kind="medicine")
+    if session_id:
+        session_memory.save_turns(db, pharmacy_id, session_id, turns)
+
+    citations = [_system_citation("context_followup", f"last_medicine={medicine.name}")]
+    ctx = ToolContext(
+        intent="MEDICINE_SEARCH",
+        language=router.language,
+        found=True,
+        items=[medicine_item],
+        suggestions=[],
+        citations=[c.model_dump() for c in citations],
+        snippets=[],
+        cards=[_medicine_card(medicine)],
+        quick_replies=_default_quick_replies(),
+        data_last_updated_at=medicine.updated_at,
+    )
+    immediate_answer = None
+    if stock > 0 and medicine.price is not None:
+        immediate_answer = f"{medicine.name} is available. Price: {float(medicine.price):.2f}."
+    return ctx, citations, actions, immediate_answer
+
+
 async def build_tool_context(
     db: Session,
     *,
@@ -526,6 +700,16 @@ async def build_tool_context(
         return ctx, [], actions, immediate_answer
 
     if router.intent == "MEDICINE_SEARCH":
+        followup_context = _context_item_tool_context(
+            db,
+            pharmacy_id=pharmacy_id,
+            router=router,
+            session_id=session_id,
+            turns=turns,
+        )
+        if followup_context is not None:
+            return followup_context
+
         q = (router.query or "").strip() or ""
         tokens = _subject_tokens(q)
         found_medicines: list[models.Medicine] = []
