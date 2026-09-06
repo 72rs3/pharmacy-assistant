@@ -1463,17 +1463,18 @@ def _enforce_action_policy(tool_ctx: object, actions: list[schemas.AIAction]) ->
     def ensure_add_to_cart_ids(vals: list[schemas.AIAction]) -> list[schemas.AIAction]:
         out: list[schemas.AIAction] = []
         for a in vals:
-            if a.type == "add_to_cart" and med_id and action_med_id(a) is None:
+            if a.type == "add_to_cart" and med_id:
+                payload = dict(a.payload or {})
+                payload["medicine_id"] = int(payload.get("medicine_id") or med_id)
+                payload["quantity"] = int(payload.get("quantity") or 1)
+                payload["requires_prescription"] = bool(rx)
                 out.append(
                     schemas.AIAction(
                         type="add_to_cart",
                         label=a.label or "Add to cart",
-                        medicine_id=med_id,
-                        payload={
-                            "medicine_id": med_id,
-                            "quantity": 1,
-                            "requires_prescription": bool(rx),
-                        },
+                        medicine_id=a.medicine_id or med_id,
+                        product_id=a.product_id,
+                        payload=payload,
                     )
                 )
             else:
@@ -1482,19 +1483,6 @@ def _enforce_action_policy(tool_ctx: object, actions: list[schemas.AIAction]) ->
 
     if stock is not None and stock <= 0:
         return dedupe([a for a in actions if a.type != "add_to_cart"])
-
-    if rx:
-        filtered = [a for a in actions if a.type != "add_to_cart"]
-        if not any(a.type == "upload_prescription" for a in filtered):
-            filtered.append(
-                schemas.AIAction(
-                    type="upload_prescription",
-                    label="Upload prescription",
-                    medicine_id=med_id,
-                    payload={"medicine_id": med_id, "quantity": 1, "requires_prescription": True} if med_id else None,
-                )
-            )
-        return dedupe(filtered)
 
     if med_id and stock is not None and stock > 0 and not any(a.type == "add_to_cart" for a in actions):
         actions = actions + [

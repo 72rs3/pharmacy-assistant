@@ -12,7 +12,7 @@ from app.ai.tool_executor import ToolContext
 from app.routes.ai_routes import _enforce_action_policy
 
 
-def test_rx_medicine_never_returns_add_to_cart_action():
+def test_rx_medicine_keeps_add_to_cart_with_prescription_flag():
     tool_ctx = ToolContext(
         intent="MEDICINE_SEARCH",
         language="en",
@@ -28,8 +28,11 @@ def test_rx_medicine_never_returns_add_to_cart_action():
         schemas.AIAction(type="add_to_cart", label="Add Amoxicillin to cart", medicine_id=10, payload={"medicine_id": 10, "quantity": 1}),
     ]
     fixed = _enforce_action_policy(tool_ctx, actions)
-    assert all(a.type != "add_to_cart" for a in fixed)
-    assert any(a.type == "upload_prescription" for a in fixed)
+    add_actions = [a for a in fixed if a.type == "add_to_cart"]
+    assert len(add_actions) == 1
+    assert add_actions[0].medicine_id == 10
+    assert add_actions[0].payload["requires_prescription"] is True
+    assert all(a.type != "upload_prescription" for a in fixed)
 
 
 def test_otc_out_of_stock_removes_add_to_cart_action():
