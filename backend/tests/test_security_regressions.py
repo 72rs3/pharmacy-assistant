@@ -329,3 +329,87 @@ def test_demo_accounts_reset_drifted_demo_password(monkeypatch):
         assert owner.pharmacy.name == "Sunrise Pharmacy"
     finally:
         db.close()
+
+
+def test_demo_accounts_attach_sunrise_owner_to_existing_default_pharmacy_data(monkeypatch):
+    monkeypatch.setenv("ENABLE_DEMO_ACCOUNTS", "1")
+    monkeypatch.setenv("DEMO_ACCOUNT_PASSWORD", "12345678")
+    monkeypatch.setenv("DEFAULT_PHARMACY_DOMAIN", "pharmacy-assistant-demo.onrender.com")
+
+    db = TestingSessionLocal()
+    try:
+        pharmacy = models.Pharmacy(
+            id=7,
+            name="Sunr Pharmacy",
+            domain="pharmacy-assistant-demo.onrender.com",
+            status="APPROVED",
+            is_active=True,
+        )
+        medicine = models.Medicine(
+            name="Panadol",
+            category="OTC",
+            price=5.5,
+            stock_level=20,
+            prescription_required=False,
+            pharmacy=pharmacy,
+        )
+        db.add_all([pharmacy, medicine])
+        db.commit()
+
+        assert ensure_demo_accounts(db) is True
+
+        sunrise_owner = db.query(models.User).filter(models.User.email == "owner.sunrise@gmail.com").one()
+        same_pharmacy = db.query(models.Pharmacy).filter(models.Pharmacy.id == 7).one()
+        panadol = db.query(models.Medicine).filter(models.Medicine.name == "Panadol").one()
+
+        assert sunrise_owner.pharmacy_id == 7
+        assert same_pharmacy.name == "Sunrise Pharmacy"
+        assert same_pharmacy.domain == "pharmacy-assistant-demo.onrender.com"
+        assert panadol.pharmacy_id == 7
+        assert db.query(models.Pharmacy).filter(models.Pharmacy.domain == "sunrise.localhost").count() == 0
+    finally:
+        db.close()
+
+
+def test_demo_accounts_prefer_existing_default_pharmacy_when_empty_duplicate_exists(monkeypatch):
+    monkeypatch.setenv("ENABLE_DEMO_ACCOUNTS", "1")
+    monkeypatch.setenv("DEMO_ACCOUNT_PASSWORD", "12345678")
+    monkeypatch.setenv("DEFAULT_PHARMACY_DOMAIN", "pharmacy-assistant-demo.onrender.com")
+
+    db = TestingSessionLocal()
+    try:
+        default_pharmacy = models.Pharmacy(
+            id=7,
+            name="Sunr Pharmacy",
+            domain="pharmacy-assistant-demo.onrender.com",
+            status="APPROVED",
+            is_active=True,
+        )
+        empty_duplicate = models.Pharmacy(
+            id=8,
+            name="Sunrise Pharmacy",
+            domain="sunrise.localhost",
+            status="APPROVED",
+            is_active=True,
+        )
+        medicine = models.Medicine(
+            name="Panadol",
+            category="OTC",
+            price=5.5,
+            stock_level=20,
+            prescription_required=False,
+            pharmacy=default_pharmacy,
+        )
+        db.add_all([default_pharmacy, empty_duplicate, medicine])
+        db.commit()
+
+        assert ensure_demo_accounts(db) is True
+
+        sunrise_owner = db.query(models.User).filter(models.User.email == "owner.sunrise@gmail.com").one()
+        panadol = db.query(models.Medicine).filter(models.Medicine.name == "Panadol").one()
+
+        assert sunrise_owner.pharmacy_id == 7
+        assert panadol.pharmacy_id == 7
+        assert db.query(models.Pharmacy).filter(models.Pharmacy.id == 8).one().name == "Sunrise Pharmacy"
+    finally:
+        db.close()

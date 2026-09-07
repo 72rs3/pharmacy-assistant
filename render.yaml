@@ -43,7 +43,7 @@ services:
       - key: DEFAULT_PHARMACY_DOMAIN
         value: pharmacy-assistant-demo.onrender.com
       - key: DEFAULT_PHARMACY_NAME
-        value: Sunr Pharmacy
+        value: Sunrise Pharmacy
       - key: DEFAULT_PHARMACY_AUTO_APPROVE
         value: "true"
       - key: PHARMACY_ADMIN_EMAIL

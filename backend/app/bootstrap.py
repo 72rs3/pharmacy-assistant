@@ -90,14 +90,56 @@ def _demo_password() -> str:
     return os.getenv("DEMO_ACCOUNT_PASSWORD") or "12345678"
 
 
-def _ensure_pharmacy(session: Session, *, name: str, domain: str) -> models.Pharmacy:
+def _find_existing_pharmacy(
+    session: Session,
+    *,
+    name: str,
+    domain: str,
+    fallback_domain: str | None = None,
+) -> models.Pharmacy | None:
     normalized_domain = _normalize_domain(domain)
+    normalized_fallback = _normalize_domain(fallback_domain) if fallback_domain else ""
     pharmacy = (
         session.query(models.Pharmacy)
-        .filter(or_(models.Pharmacy.domain == normalized_domain, models.Pharmacy.name == name))
+        .filter(
+            or_(
+                models.Pharmacy.domain == normalized_domain,
+                models.Pharmacy.name == name,
+                models.Pharmacy.domain == normalized_fallback,
+            )
+        )
         .order_by(models.Pharmacy.id.asc())
         .first()
     )
+    if pharmacy is not None:
+        return pharmacy
+
+    slug = normalized_domain.split(".", 1)[0]
+    if slug:
+        return (
+            session.query(models.Pharmacy)
+            .filter(
+                or_(
+                    models.Pharmacy.domain == slug,
+                    models.Pharmacy.domain.like(f"{slug}.%"),
+                    models.Pharmacy.name.ilike(f"%{slug}%"),
+                )
+            )
+            .order_by(models.Pharmacy.id.asc())
+            .first()
+        )
+    return None
+
+
+def _ensure_pharmacy(
+    session: Session,
+    *,
+    name: str,
+    domain: str,
+    fallback_domain: str | None = None,
+) -> models.Pharmacy:
+    normalized_domain = _normalize_domain(domain)
+    pharmacy = _find_existing_pharmacy(session, name=name, domain=normalized_domain, fallback_domain=fallback_domain)
     if pharmacy is None:
         pharmacy = models.Pharmacy(
             name=name,
@@ -110,8 +152,15 @@ def _ensure_pharmacy(session: Session, *, name: str, domain: str) -> models.Phar
         session.flush()
         return pharmacy
 
-    pharmacy.name = name
-    pharmacy.domain = normalized_domain
+    name_owner = (
+        session.query(models.Pharmacy)
+        .filter(models.Pharmacy.name == name, models.Pharmacy.id != pharmacy.id)
+        .first()
+    )
+    if name_owner is None:
+        pharmacy.name = name
+    if not pharmacy.domain:
+        pharmacy.domain = normalized_domain
     pharmacy.status = "APPROVED"
     pharmacy.is_active = True
     pharmacy.support_cod = True
@@ -155,16 +204,19 @@ def ensure_demo_accounts(db: Session | None = None) -> bool:
 
     password = _demo_password()
     admin_email = os.getenv("DEMO_ADMIN_EMAIL") or os.getenv("PHARMACY_ADMIN_EMAIL") or "admin@example.com"
+    default_domain = os.getenv("DEFAULT_PHARMACY_DOMAIN")
     accounts = [
         {
             "pharmacy_name": "Sunrise Pharmacy",
             "pharmacy_domain": os.getenv("DEMO_SUNRISE_DOMAIN") or "sunrise.localhost",
+            "fallback_domain": os.getenv("DEMO_SUNRISE_FALLBACK_DOMAIN") or default_domain,
             "owner_email": os.getenv("DEMO_SUNRISE_OWNER_EMAIL") or "owner.sunrise@gmail.com",
             "owner_name": "Sunrise Owner",
         },
         {
             "pharmacy_name": "Faysal Pharmacy",
             "pharmacy_domain": os.getenv("DEMO_FAYSAL_DOMAIN") or "faysal.localhost",
+            "fallback_domain": os.getenv("DEMO_FAYSAL_FALLBACK_DOMAIN"),
             "owner_email": os.getenv("DEMO_FAYSAL_OWNER_EMAIL") or "owner.faysal@gmail.com",
             "owner_name": "Faysal Owner",
         },
@@ -187,6 +239,7 @@ def ensure_demo_accounts(db: Session | None = None) -> bool:
                 session,
                 name=account["pharmacy_name"],
                 domain=account["pharmacy_domain"],
+                fallback_domain=account["fallback_domain"],
             )
             _ensure_demo_user(
                 session,
