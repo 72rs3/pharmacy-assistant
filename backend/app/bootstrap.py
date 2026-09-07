@@ -191,6 +191,124 @@ def _ensure_demo_user(
     return user
 
 
+DEMO_MEDICINES = [
+    {
+        "name": "Panadol",
+        "category": "Pain Relief",
+        "price": 5.50,
+        "stock_level": 48,
+        "prescription_required": False,
+        "dosage": "500 mg tablet",
+        "side_effects": "Follow the label. Ask a pharmacist if symptoms persist or you are unsure.",
+    },
+    {
+        "name": "Ibuprofen",
+        "category": "Pain Relief",
+        "price": 4.75,
+        "stock_level": 35,
+        "prescription_required": False,
+        "dosage": "200 mg tablet",
+        "side_effects": "Avoid if you have a stomach ulcer, severe kidney disease, or NSAID allergy unless advised.",
+    },
+    {
+        "name": "Cetirizine",
+        "category": "Allergy",
+        "price": 6.25,
+        "stock_level": 28,
+        "prescription_required": False,
+        "dosage": "10 mg tablet",
+        "side_effects": "May cause drowsiness in some people.",
+    },
+    {
+        "name": "Oral Rehydration Salts",
+        "category": "Digestive Health",
+        "price": 3.00,
+        "stock_level": 40,
+        "prescription_required": False,
+        "dosage": "1 sachet mixed with clean water",
+        "side_effects": "Use as directed on the packet.",
+    },
+    {
+        "name": "Promethazine",
+        "category": "Prescription",
+        "price": 8.75,
+        "stock_level": 12,
+        "prescription_required": True,
+        "dosage": "25 mg hydrochloride tablet",
+        "side_effects": "Prescription required. May cause drowsiness; avoid driving unless advised.",
+    },
+    {
+        "name": "Amoxicillin",
+        "category": "Antibiotic",
+        "price": 11.00,
+        "stock_level": 18,
+        "prescription_required": True,
+        "dosage": "500 mg capsule",
+        "side_effects": "Prescription required. Complete the course exactly as prescribed.",
+    },
+]
+
+
+DEMO_PRODUCTS = [
+    {
+        "name": "Digital Thermometer",
+        "category": "Health Devices",
+        "price": 12.00,
+        "stock_level": 15,
+        "description": "Fast digital thermometer for home fever checks.",
+        "image_url": None,
+    },
+    {
+        "name": "Vitamin C 1000mg",
+        "category": "Vitamins",
+        "price": 9.50,
+        "stock_level": 30,
+        "description": "Daily vitamin C supplement.",
+        "image_url": None,
+    },
+    {
+        "name": "Hand Sanitizer",
+        "category": "Personal Care",
+        "price": 2.25,
+        "stock_level": 60,
+        "description": "Pocket-size antibacterial hand sanitizer.",
+        "image_url": None,
+    },
+    {
+        "name": "Blood Pressure Monitor",
+        "category": "Health Devices",
+        "price": 45.00,
+        "stock_level": 6,
+        "description": "Automatic upper-arm blood pressure monitor.",
+        "image_url": None,
+    },
+]
+
+
+def _ensure_demo_catalog(session: Session, pharmacy: models.Pharmacy) -> bool:
+    if not _env_flag("ENABLE_DEMO_CATALOG", default=_env_flag("ENABLE_DEMO_ACCOUNTS", default=False)):
+        return False
+
+    changed = False
+    medicine_count = session.query(models.Medicine).filter(models.Medicine.pharmacy_id == pharmacy.id).count()
+    if medicine_count == 0:
+        session.add_all(
+            models.Medicine(pharmacy_id=pharmacy.id, **item)
+            for item in DEMO_MEDICINES
+        )
+        changed = True
+
+    product_count = session.query(models.Product).filter(models.Product.pharmacy_id == pharmacy.id).count()
+    if product_count == 0:
+        session.add_all(
+            models.Product(pharmacy_id=pharmacy.id, **item)
+            for item in DEMO_PRODUCTS
+        )
+        changed = True
+
+    return changed
+
+
 def ensure_demo_accounts(db: Session | None = None) -> bool:
     """
     Stable demo login bootstrap for public portfolio/test deployments.
@@ -250,6 +368,7 @@ def ensure_demo_accounts(db: Session | None = None) -> bool:
                 is_admin=False,
                 pharmacy_id=pharmacy.id,
             )
+            _ensure_demo_catalog(session, pharmacy)
         session.commit()
         return True
     finally:

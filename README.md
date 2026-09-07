@@ -38,6 +38,8 @@ When `ENABLE_DEMO_ACCOUNTS=1`, the app keeps these public demo logins stable on 
 - Sunrise Pharmacy owner: `owner.sunrise@gmail.com` / `12345678`
 - Faysal Pharmacy owner: `owner.faysal@gmail.com` / `12345678`
 
+When `ENABLE_DEMO_CATALOG=1`, empty demo pharmacies are seeded with medicines and shop products. Existing pharmacy inventory is preserved and is not overwritten.
+
 ## Configuration
 Primary settings live in `.env` (used by Docker Compose).
 

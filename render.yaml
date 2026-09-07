@@ -16,6 +16,8 @@ services:
         value: "1"
       - key: ENABLE_DEMO_ACCOUNTS
         value: "1"
+      - key: ENABLE_DEMO_CATALOG
+        value: "1"
       - key: DEMO_ACCOUNT_PASSWORD
         value: "12345678"
       - key: DEMO_ADMIN_EMAIL

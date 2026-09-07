@@ -333,6 +333,7 @@ def test_demo_accounts_reset_drifted_demo_password(monkeypatch):
 
 def test_demo_accounts_attach_sunrise_owner_to_existing_default_pharmacy_data(monkeypatch):
     monkeypatch.setenv("ENABLE_DEMO_ACCOUNTS", "1")
+    monkeypatch.setenv("ENABLE_DEMO_CATALOG", "0")
     monkeypatch.setenv("DEMO_ACCOUNT_PASSWORD", "12345678")
     monkeypatch.setenv("DEFAULT_PHARMACY_DOMAIN", "pharmacy-assistant-demo.onrender.com")
 
@@ -371,8 +372,86 @@ def test_demo_accounts_attach_sunrise_owner_to_existing_default_pharmacy_data(mo
         db.close()
 
 
+def test_demo_accounts_seed_catalog_for_empty_demo_pharmacy(monkeypatch):
+    monkeypatch.setenv("ENABLE_DEMO_ACCOUNTS", "1")
+    monkeypatch.setenv("ENABLE_DEMO_CATALOG", "1")
+    monkeypatch.setenv("DEFAULT_PHARMACY_DOMAIN", "pharmacy-assistant-demo.onrender.com")
+
+    db = TestingSessionLocal()
+    try:
+        pharmacy = models.Pharmacy(
+            id=7,
+            name="Sunr Pharmacy",
+            domain="pharmacy-assistant-demo.onrender.com",
+            status="APPROVED",
+            is_active=True,
+        )
+        db.add(pharmacy)
+        db.commit()
+
+        assert ensure_demo_accounts(db) is True
+
+        sunrise_owner = db.query(models.User).filter(models.User.email == "owner.sunrise@gmail.com").one()
+        panadol = (
+            db.query(models.Medicine)
+            .filter(models.Medicine.pharmacy_id == sunrise_owner.pharmacy_id, models.Medicine.name == "Panadol")
+            .one()
+        )
+        promethazine = (
+            db.query(models.Medicine)
+            .filter(models.Medicine.pharmacy_id == sunrise_owner.pharmacy_id, models.Medicine.name == "Promethazine")
+            .one()
+        )
+        products = db.query(models.Product).filter(models.Product.pharmacy_id == sunrise_owner.pharmacy_id).count()
+
+        assert panadol.price == 5.50
+        assert panadol.prescription_required is False
+        assert promethazine.prescription_required is True
+        assert products >= 4
+    finally:
+        db.close()
+
+
+def test_demo_catalog_does_not_overwrite_existing_inventory(monkeypatch):
+    monkeypatch.setenv("ENABLE_DEMO_ACCOUNTS", "1")
+    monkeypatch.setenv("ENABLE_DEMO_CATALOG", "1")
+    monkeypatch.setenv("DEFAULT_PHARMACY_DOMAIN", "pharmacy-assistant-demo.onrender.com")
+
+    db = TestingSessionLocal()
+    try:
+        pharmacy = models.Pharmacy(
+            id=7,
+            name="Sunr Pharmacy",
+            domain="pharmacy-assistant-demo.onrender.com",
+            status="APPROVED",
+            is_active=True,
+        )
+        medicine = models.Medicine(
+            name="Custom Panadol",
+            category="OTC",
+            price=99.0,
+            stock_level=3,
+            prescription_required=False,
+            pharmacy=pharmacy,
+        )
+        db.add_all([pharmacy, medicine])
+        db.commit()
+
+        assert ensure_demo_accounts(db) is True
+
+        medicines = db.query(models.Medicine).filter(models.Medicine.pharmacy_id == pharmacy.id).all()
+        custom = db.query(models.Medicine).filter(models.Medicine.name == "Custom Panadol").one()
+
+        assert len(medicines) == 1
+        assert custom.price == 99.0
+        assert custom.stock_level == 3
+    finally:
+        db.close()
+
+
 def test_demo_accounts_prefer_existing_default_pharmacy_when_empty_duplicate_exists(monkeypatch):
     monkeypatch.setenv("ENABLE_DEMO_ACCOUNTS", "1")
+    monkeypatch.setenv("ENABLE_DEMO_CATALOG", "0")
     monkeypatch.setenv("DEMO_ACCOUNT_PASSWORD", "12345678")
     monkeypatch.setenv("DEFAULT_PHARMACY_DOMAIN", "pharmacy-assistant-demo.onrender.com")
 
