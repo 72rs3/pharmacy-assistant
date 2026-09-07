@@ -281,27 +281,7 @@ export default function OwnerProducts() {
     const ext = name.toLowerCase().split(".").pop();
     try {
       if (ext === "xlsx" || ext === "xls") {
-        const [{ read, utils }] = await Promise.all([import("xlsx")]);
-        const data = await file.arrayBuffer();
-        const workbook = read(data, { type: "array" });
-        const firstSheetName = workbook.SheetNames?.[0];
-        if (!firstSheetName) {
-          setError("Excel file has no sheets.");
-          return;
-        }
-        const sheet = workbook.Sheets[firstSheetName];
-        const rows = utils.sheet_to_json(sheet, { header: 1, defval: "" });
-        if (!Array.isArray(rows) || rows.length === 0) {
-          setError("Excel sheet is empty.");
-          return;
-        }
-        const tsv = rows
-          .map((row) =>
-            (Array.isArray(row) ? row : [row]).map((cell) => String(cell ?? "").replaceAll("\t", " ").trimEnd()).join("\t")
-          )
-          .join("\n");
-        setBulkText(tsv);
-        setBulkPreview(parseBulkText(tsv));
+        setError("XLS/XLSX upload is disabled for security. Export the sheet as CSV or TSV and upload that file.");
         return;
       }
 
@@ -575,7 +555,7 @@ export default function OwnerProducts() {
             <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between gap-4">
               <div>
                 <h2 className="text-lg font-semibold text-slate-900">Bulk Import Products</h2>
-                <p className="text-sm text-slate-500">Upload CSV/XLSX or paste rows (tab-separated works best).</p>
+                <p className="text-sm text-slate-500">Upload CSV/TSV or paste rows (tab-separated works best).</p>
               </div>
               <button
                 type="button"
@@ -591,14 +571,14 @@ export default function OwnerProducts() {
                 <div className="space-y-2">
                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                     <label className="block text-xs font-medium text-slate-600" htmlFor="bulkFile">
-                      Upload file (CSV/XLSX)
+                      Upload file (CSV/TSV)
                     </label>
                     <div className="text-xs text-slate-500">{bulkFileName ? `Selected: ${bulkFileName}` : ""}</div>
                   </div>
                   <input
                     id="bulkFile"
                     type="file"
-                    accept=".csv,.tsv,.txt,.xlsx,.xls"
+                    accept=".csv,.tsv,.txt"
                     onChange={(e) => loadBulkFile(e.target.files?.[0] ?? null)}
                     className="block w-full text-sm text-slate-700 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border file:border-slate-200 file:bg-white file:text-slate-700 hover:file:bg-slate-50"
                   />

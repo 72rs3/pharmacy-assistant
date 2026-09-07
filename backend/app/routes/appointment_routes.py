@@ -4,7 +4,7 @@ import json
 import secrets
 from datetime import date, datetime, time, timedelta
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
 from sqlalchemy import case, or_
 from sqlalchemy.orm import Session
 
@@ -15,6 +15,7 @@ from app.deps import get_active_public_pharmacy_id, get_current_pharmacy_id
 from app.appointments.reminders import process_due_reminders, process_no_shows
 from app.appointments.email_templates import render_reminder
 from app.utils.email import send_email
+from app.utils.rate_limit import client_ip, enforce_rate_limit, env_int
 from app.utils.validation import validate_e164_phone
 
 router = APIRouter(prefix="/appointments", tags=["Appointments"])
@@ -233,13 +234,34 @@ def _build_availability(db: Session, pharmacy_id: int, date_str: str) -> dict:
     return {"date": target_date.isoformat(), "slots": slots, "timezone": settings.timezone}
 
 
+def _public_availability(payload: dict) -> dict:
+    return {
+        "date": payload.get("date"),
+        "timezone": payload.get("timezone"),
+        "slots": [
+            {
+                "start": slot.get("start"),
+                "end": slot.get("end"),
+                "booked": bool(slot.get("booked")),
+            }
+            for slot in payload.get("slots", [])
+        ],
+    }
+
+
 @router.post("", response_model=schemas.CustomerAppointmentCreated)
 def create_customer_appointment(
     payload: schemas.CustomerAppointmentCreate,
+    request: Request,
     customer_tracking_code: str | None = Header(None, alias="X-Customer-ID"),
     db: Session = Depends(get_db),
     tenant_pharmacy_id: int = Depends(get_active_public_pharmacy_id),
 ):
+    enforce_rate_limit(
+        f"appointment:create:{tenant_pharmacy_id}:{client_ip(request)}",
+        limit=env_int("PUBLIC_APPOINTMENT_RATE_LIMIT_PER_MIN", 10),
+        window_seconds=60,
+    )
     tracking_code = (customer_tracking_code or "").strip() or secrets.token_urlsafe(12)
     _validate_slot(db, tenant_pharmacy_id, payload.scheduled_time)
     appt = models.Appointment(
@@ -421,7 +443,7 @@ def get_public_appointment_availability(
     db: Session = Depends(get_db),
     tenant_pharmacy_id: int = Depends(get_active_public_pharmacy_id),
 ):
-    return _build_availability(db, tenant_pharmacy_id, date_str)
+    return _public_availability(_build_availability(db, tenant_pharmacy_id, date_str))
 
 
 @router.post("/{appointment_id}/status", response_model=schemas.Appointment)

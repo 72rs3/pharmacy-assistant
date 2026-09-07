@@ -49,6 +49,11 @@ def _demo_import_enabled() -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _allow_user_import() -> bool:
+    raw = os.getenv("DEMO_IMPORT_ALLOW_USERS", "")
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _table_for_name(name: str):
     table = Base.metadata.tables.get(name)
     if table is None or name not in IMPORT_ORDER:
@@ -91,6 +96,12 @@ def import_demo_data(
 ):
     if not _demo_import_enabled():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    allow_user_import = _allow_user_import()
+    if not allow_user_import and payload.tables.get("users"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Importing users is disabled. Set DEMO_IMPORT_ALLOW_USERS=1 for an intentional user reset.",
+        )
 
     unknown = sorted(set(payload.tables) - set(IMPORT_ORDER))
     if unknown:
@@ -102,11 +113,15 @@ def import_demo_data(
     try:
         if payload.clear_existing:
             for name in reversed(IMPORT_ORDER):
+                if name in {"pharmacies", "users"} and not allow_user_import:
+                    continue
                 table = _table_for_name(name)
                 db.execute(table.delete())
 
         imported: dict[str, int] = {}
         for name in IMPORT_ORDER:
+            if name == "users" and not allow_user_import:
+                continue
             rows = payload.tables.get(name) or []
             if not rows:
                 continue
@@ -114,7 +129,11 @@ def import_demo_data(
             table = _table_for_name(name)
             cleaned = [_clean_row(row, table) for row in rows]
             if cleaned:
-                db.execute(table.insert(), cleaned)
+                if name == "pharmacies" and not allow_user_import:
+                    for row in cleaned:
+                        db.merge(models.Pharmacy(**row))
+                else:
+                    db.execute(table.insert(), cleaned)
                 imported[name] = len(cleaned)
 
         if db.bind and db.bind.dialect.name == "postgresql":

@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, ConfigDict
+from pydantic import BaseModel, EmailStr, ConfigDict, Field
 
 
 class UserBase(BaseModel):
@@ -7,14 +7,14 @@ class UserBase(BaseModel):
 
 
 class UserCreate(UserBase):
-    password: str
-    pharmacy_name: str | None = None  # owners can supply a new pharmacy name
-    pharmacy_domain: str | None = None
+    password: str = Field(min_length=8, max_length=256)
+    pharmacy_name: str | None = Field(default=None, max_length=120)  # owners can supply a new pharmacy name
+    pharmacy_domain: str | None = Field(default=None, max_length=255)
 
 
 class UserLogin(BaseModel):
     email: EmailStr
-    password: str
+    password: str = Field(min_length=1, max_length=256)
 
 
 class UserOut(UserBase):
@@ -35,10 +35,10 @@ class TokenData(BaseModel):
 
 
 class PasswordChangeIn(BaseModel):
-    current_password: str
-    new_password: str
+    current_password: str = Field(min_length=1, max_length=256)
+    new_password: str = Field(min_length=8, max_length=256)
 
 
 class AdminPasswordResetIn(BaseModel):
     email: EmailStr
-    new_password: str
+    new_password: str = Field(min_length=8, max_length=256)

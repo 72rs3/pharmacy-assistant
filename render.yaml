@@ -14,6 +14,10 @@ services:
         value: "1"
       - key: ENABLE_DEMO_IMPORT
         value: "1"
+      - key: DEMO_IMPORT_ALLOW_USERS
+        value: "0"
+      - key: PHARMACY_ADMIN_FORCE_PASSWORD_RESET
+        value: "0"
       - key: SECRET_KEY
         generateValue: true
       - key: CORS_ORIGINS
@@ -72,6 +76,10 @@ services:
         value: https://pharmacy-assistant-demo.onrender.com
       - key: OPENROUTER_X_TITLE
         value: Pharmacy Assistant
+      - key: AI_CHAT_IP_RATE_LIMIT_PER_MIN
+        value: "20"
+      - key: AI_CHAT_SESSION_RATE_LIMIT_PER_MIN
+        value: "12"
       - key: RAG_TOP_K
         value: "6"
       - key: RAG_MIN_SCORE
@@ -88,6 +96,14 @@ services:
         value: local
       - key: PRESCRIPTION_MAX_UPLOAD_BYTES
         value: "10485760"
+      - key: PRESCRIPTION_MAX_FILES_PER_REQUEST
+        value: "3"
+      - key: PRESCRIPTION_MAX_DRAFTS_PER_TENANT
+        value: "30"
+      - key: PRESCRIPTION_DRAFT_TTL_HOURS
+        value: "24"
+      - key: PRESCRIPTION_UPLOAD_RATE_LIMIT_PER_MIN
+        value: "6"
       - key: RESEND_API_KEY
         sync: false
       - key: RESEND_FROM

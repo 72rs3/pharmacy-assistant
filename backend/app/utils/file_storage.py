@@ -119,3 +119,27 @@ def load_prescription_file(location: str, *, original_filename: str | None, cont
         filename=original_filename or resolved.name,
         content_type=content_type or "application/octet-stream",
     )
+
+
+def delete_prescription_file(location: str) -> None:
+    if not location:
+        return
+    if location.startswith("r2://"):
+        without_scheme = location.removeprefix("r2://")
+        bucket, _, key = without_scheme.partition("/")
+        if not bucket or not key:
+            return
+        try:
+            _r2_client().delete_object(Bucket=bucket, Key=key)
+        except Exception:
+            return
+        return
+
+    try:
+        resolved = Path(location).resolve(strict=True)
+        upload_root = LOCAL_UPLOAD_DIR.resolve(strict=False)
+        if upload_root not in resolved.parents and resolved != upload_root:
+            return
+        resolved.unlink(missing_ok=True)
+    except Exception:
+        return

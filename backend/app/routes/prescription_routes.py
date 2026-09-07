@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import os
 import secrets
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
@@ -14,12 +14,16 @@ from app import models, schemas
 from app.auth.deps import require_approved_owner
 from app.db import get_db
 from app.deps import get_active_public_pharmacy_id
-from app.utils.file_storage import load_prescription_file, save_prescription_upload
+from app.utils.file_storage import delete_prescription_file, load_prescription_file, save_prescription_upload
+from app.utils.rate_limit import client_ip, enforce_rate_limit, env_int
 
 router = APIRouter(prefix="/prescriptions", tags=["Prescriptions"])
 
 MAX_UPLOAD_BYTES = int(os.getenv("PRESCRIPTION_MAX_UPLOAD_BYTES", str(10 * 1024 * 1024)))
 ALLOWED_CONTENT_TYPES = {"image/png", "image/jpeg", "image/webp", "image/gif", "application/pdf"}
+MAX_FILES_PER_REQUEST = int(os.getenv("PRESCRIPTION_MAX_FILES_PER_REQUEST", "3"))
+MAX_DRAFTS_PER_TENANT = int(os.getenv("PRESCRIPTION_MAX_DRAFTS_PER_TENANT", "30"))
+DRAFT_TTL_HOURS = int(os.getenv("PRESCRIPTION_DRAFT_TTL_HOURS", "24"))
 
 
 def _validate_order(db: Session, order_id: int, tenant_pharmacy_id: int) -> models.Order:
@@ -55,6 +59,44 @@ async def _read_limited_upload(file: UploadFile) -> bytes:
     return content
 
 
+def _cleanup_expired_drafts(db: Session, tenant_pharmacy_id: int) -> None:
+    cutoff = datetime.utcnow() - timedelta(hours=max(1, DRAFT_TTL_HOURS))
+    expired = (
+        db.query(models.Prescription)
+        .filter(
+            models.Prescription.pharmacy_id == tenant_pharmacy_id,
+            models.Prescription.order_id.is_(None),
+            models.Prescription.status == "DRAFT",
+            models.Prescription.upload_date < cutoff,
+        )
+        .limit(100)
+        .all()
+    )
+    for draft in expired:
+        delete_prescription_file(draft.file_path or "")
+        db.delete(draft)
+    if expired:
+        db.commit()
+
+
+def _enforce_draft_quota(db: Session, tenant_pharmacy_id: int, incoming_count: int) -> None:
+    _cleanup_expired_drafts(db, tenant_pharmacy_id)
+    active_count = (
+        db.query(models.Prescription)
+        .filter(
+            models.Prescription.pharmacy_id == tenant_pharmacy_id,
+            models.Prescription.order_id.is_(None),
+            models.Prescription.status == "DRAFT",
+        )
+        .count()
+    )
+    if active_count + incoming_count > MAX_DRAFTS_PER_TENANT:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many prescription uploads. Please complete checkout or try again later.",
+        )
+
+
 def _attachment_header(filename: str) -> str:
     safe_fallback = "".join(ch if ch.isalnum() or ch in {"-", "_", "."} else "_" for ch in filename) or "prescription"
     encoded = quote(filename, safe="")
@@ -63,12 +105,24 @@ def _attachment_header(filename: str) -> str:
 
 @router.post("/draft", response_model=list[schemas.PrescriptionDraftOut])
 async def upload_prescription_draft(
+    request: Request,
     files: List[UploadFile] = File(...),
     db: Session = Depends(get_db),
     tenant_pharmacy_id: int = Depends(get_active_public_pharmacy_id),
 ):
     if not files:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No files provided")
+    if len(files) > MAX_FILES_PER_REQUEST:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Upload up to {MAX_FILES_PER_REQUEST} file(s) at a time.",
+        )
+    enforce_rate_limit(
+        f"rx:draft:{tenant_pharmacy_id}:{client_ip(request)}",
+        limit=env_int("PRESCRIPTION_UPLOAD_RATE_LIMIT_PER_MIN", 6),
+        window_seconds=60,
+    )
+    _enforce_draft_quota(db, tenant_pharmacy_id, len(files))
 
     created: list[models.Prescription] = []
     for file in files:
@@ -113,6 +167,7 @@ async def upload_prescription_draft(
 
 @router.post("/upload", response_model=list[schemas.PrescriptionStatusOut])
 async def upload_prescription(
+    request: Request,
     order_id: int = Form(...),
     files: List[UploadFile] = File(...),
     db: Session = Depends(get_db),
@@ -121,6 +176,16 @@ async def upload_prescription(
     _validate_order(db, order_id, tenant_pharmacy_id)
     if not files:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No files provided")
+    if len(files) > MAX_FILES_PER_REQUEST:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Upload up to {MAX_FILES_PER_REQUEST} file(s) at a time.",
+        )
+    enforce_rate_limit(
+        f"rx:order:{tenant_pharmacy_id}:{client_ip(request)}",
+        limit=env_int("PRESCRIPTION_UPLOAD_RATE_LIMIT_PER_MIN", 6),
+        window_seconds=60,
+    )
 
     created: list[models.Prescription] = []
     for file in files:

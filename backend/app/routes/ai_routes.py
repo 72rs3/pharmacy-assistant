@@ -5,7 +5,7 @@ import json
 import os
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app import models, schemas
@@ -24,6 +24,7 @@ from app.config.rag import get_rag_config
 from app.auth.deps import require_admin, require_approved_owner
 from app.db import get_db
 from app.deps import get_active_public_pharmacy_id
+from app.utils.rate_limit import client_ip, enforce_rate_limit, env_int
 
 
 router = APIRouter(prefix="/ai", tags=["AI"])
@@ -1499,6 +1500,7 @@ def _enforce_action_policy(tool_ctx: object, actions: list[schemas.AIAction]) ->
 @router.post("/chat", response_model=schemas.AIChatOut)
 async def chat(
     payload: schemas.AIChatIn,
+    request: Request,
     db: Session = Depends(get_db),
     pharmacy_id: int = Depends(get_active_public_pharmacy_id),
     customer_id: str = Depends(_get_customer_chat_id),
@@ -1506,6 +1508,16 @@ async def chat(
     message = (payload.message or "").strip()
     if not message:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Message is required")
+    enforce_rate_limit(
+        f"ai:ip:{pharmacy_id}:{client_ip(request)}",
+        limit=env_int("AI_CHAT_IP_RATE_LIMIT_PER_MIN", 20),
+        window_seconds=60,
+    )
+    enforce_rate_limit(
+        f"ai:customer:{pharmacy_id}:{customer_id}",
+        limit=env_int("AI_CHAT_SESSION_RATE_LIMIT_PER_MIN", 12),
+        window_seconds=60,
+    )
     requested_session_id = (payload.session_id or "").strip() or None
 
     try:

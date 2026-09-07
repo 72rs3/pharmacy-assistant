@@ -240,26 +240,26 @@ class Order(OrderBase):
 class CustomerOrderItemCreate(BaseModel):
     medicine_id: int | None = None
     product_id: int | None = None
-    quantity: int
+    quantity: int = Field(ge=1, le=99)
 
 
 class CustomerOrderCreate(BaseModel):
-    customer_name: str
-    customer_phone: str
-    customer_address: str
-    customer_notes: str | None = None
-    items: List[CustomerOrderItemCreate]
-    draft_prescription_tokens: list[str] | None = None
+    customer_name: str = Field(min_length=1, max_length=120)
+    customer_phone: str = Field(min_length=1, max_length=32)
+    customer_address: str = Field(min_length=1, max_length=500)
+    customer_notes: str | None = Field(default=None, max_length=1000)
+    items: List[CustomerOrderItemCreate] = Field(min_length=1, max_length=50)
+    draft_prescription_tokens: list[str] | None = Field(default=None, max_length=10)
 
 
 class CustomerRxOrderCreate(BaseModel):
-    customer_name: str
-    customer_phone: str
-    customer_address: str
-    customer_notes: str | None = None
+    customer_name: str = Field(min_length=1, max_length=120)
+    customer_phone: str = Field(min_length=1, max_length=32)
+    customer_address: str = Field(min_length=1, max_length=500)
+    customer_notes: str | None = Field(default=None, max_length=1000)
     medicine_id: int
-    quantity: int = 1
-    draft_prescription_tokens: list[str]
+    quantity: int = Field(default=1, ge=1, le=99)
+    draft_prescription_tokens: list[str] = Field(min_length=1, max_length=10)
 
 
 class CustomerOrderCreated(BaseModel):
@@ -387,12 +387,12 @@ class Appointment(AppointmentBase):
 
 
 class CustomerAppointmentCreate(BaseModel):
-    customer_name: str
-    customer_phone: str
-    customer_email: str | None = None
-    type: str
+    customer_name: str = Field(min_length=1, max_length=120)
+    customer_phone: str = Field(min_length=1, max_length=32)
+    customer_email: str | None = Field(default=None, max_length=255)
+    type: str = Field(min_length=1, max_length=80)
     scheduled_time: datetime
-    vaccine_name: str | None = None
+    vaccine_name: str | None = Field(default=None, max_length=120)
 
 
 class CustomerAppointmentOut(BaseModel):
@@ -528,8 +528,8 @@ class AILog(AILogBase):
 
 
 class AIChatIn(BaseModel):
-    message: str
-    session_id: str | None = None
+    message: str = Field(min_length=1, max_length=2000)
+    session_id: str | None = Field(default=None, max_length=128)
 
 
 class AICitation(BaseModel):
@@ -621,7 +621,7 @@ class ChatSessionReplyIn(BaseModel):
 
 
 class ChatSessionMessageIn(BaseModel):
-    text: str
+    text: str = Field(min_length=1, max_length=2000)
 
 
 class ContactMessageCreate(BaseModel):

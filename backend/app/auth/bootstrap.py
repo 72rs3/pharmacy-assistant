@@ -7,6 +7,13 @@ from app.auth.utils import hash_password
 from app.db import SessionLocal
 
 
+def _env_flag(name: str, *, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def ensure_admin_user(db: Session | None = None) -> bool:
     """
     One-time bootstrap for an initial admin user.
@@ -38,7 +45,8 @@ def ensure_admin_user(db: Session | None = None) -> bool:
             existing_user.pharmacy_id = None
             existing_user.role = "ADMIN"
             existing_user.full_name = existing_user.full_name or full_name
-            existing_user.hashed_password = hash_password(password)
+            if _env_flag("PHARMACY_ADMIN_FORCE_PASSWORD_RESET"):
+                existing_user.hashed_password = hash_password(password)
             session.commit()
             return True
 
