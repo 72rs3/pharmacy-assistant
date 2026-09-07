@@ -2,6 +2,31 @@
 
 AI‑powered pharmacy assistant with a customer storefront, owner portal, pharmacist escalation, and a database‑backed cart.
 
+## Live Demo
+
+Portfolio demo:
+
+- Customer storefront: https://pharmacy-assistant-demo.onrender.com
+- Owner/Admin portal: https://pharmacy-assistant-demo.onrender.com/portal/login
+- GitHub repository: https://github.com/72rs3/pharmacy-assistant
+
+Demo logins:
+
+| Role | Email | Password | What to test |
+| --- | --- | --- | --- |
+| Platform admin | `admin@example.com` | `12345678` | Approve/manage pharmacies and inspect admin pages |
+| Sunrise Pharmacy owner | `owner.sunrise@gmail.com` | `12345678` | Manage inventory, products, orders, appointments, prescriptions, and AI escalations |
+| Faysal Pharmacy owner | `owner.faysal@gmail.com` | `12345678` | Test a second tenant/pharmacy account |
+
+Suggested recruiter test flow:
+
+1. Open the storefront and ask the AI: `hello i need panadol`.
+2. Ask a follow-up: `price?` and confirm the chat remembers the previous medicine.
+3. Add Panadol to the cart and continue checkout.
+4. Ask for `promethazine`, add it to cart, and confirm checkout requires a prescription upload before placing the order.
+5. Log in as the Sunrise owner and check inventory, products, orders, appointments, prescription review, and AI escalation pages.
+6. Log in as platform admin and confirm multi-pharmacy management.
+
 ## Highlights
 - Multi‑tenant storefronts (per‑pharmacy domain like `sunrise.localhost`).
 - Owner portal for inventory, products, orders, appointments, escalations.
