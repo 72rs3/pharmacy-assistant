@@ -19,6 +19,7 @@ from app import models
 from app.auth import deps as auth_deps
 from app.auth import utils
 from app.auth.bootstrap import ensure_admin_user
+from app.bootstrap import ensure_demo_accounts
 from app.ai.provider_factory import get_ai_provider
 from app.db import Base, get_db
 from app.main import app
@@ -273,5 +274,58 @@ def test_demo_import_preserves_existing_users_while_refreshing_pharmacy_data(cli
         assert owner.pharmacy_id == 1
         assert pharmacy.name == "Sunrise Pharmacy"
         assert medicine.pharmacy_id == 1
+    finally:
+        db.close()
+
+
+def test_demo_accounts_create_stable_logins(monkeypatch):
+    monkeypatch.setenv("ENABLE_DEMO_ACCOUNTS", "1")
+    monkeypatch.setenv("DEMO_ACCOUNT_PASSWORD", "12345678")
+
+    db = TestingSessionLocal()
+    try:
+        assert ensure_demo_accounts(db) is True
+
+        admin = db.query(models.User).filter(models.User.email == "admin@example.com").one()
+        sunrise = db.query(models.User).filter(models.User.email == "owner.sunrise@gmail.com").one()
+        faysal = db.query(models.User).filter(models.User.email == "owner.faysal@gmail.com").one()
+
+        assert admin.is_admin is True
+        assert admin.role == "ADMIN"
+        assert admin.pharmacy_id is None
+        assert sunrise.pharmacy.name == "Sunrise Pharmacy"
+        assert sunrise.pharmacy.domain == "sunrise.localhost"
+        assert faysal.pharmacy.name == "Faysal Pharmacy"
+        assert faysal.pharmacy.domain == "faysal.localhost"
+        assert utils.verify_password("12345678", admin.hashed_password)
+        assert utils.verify_password("12345678", sunrise.hashed_password)
+        assert utils.verify_password("12345678", faysal.hashed_password)
+    finally:
+        db.close()
+
+
+def test_demo_accounts_reset_drifted_demo_password(monkeypatch):
+    monkeypatch.setenv("ENABLE_DEMO_ACCOUNTS", "1")
+    monkeypatch.setenv("DEMO_ACCOUNT_PASSWORD", "12345678")
+
+    db = TestingSessionLocal()
+    try:
+        pharmacy = models.Pharmacy(name="Sunrise Pharmacy", domain="sunrise.localhost", status="APPROVED", is_active=True)
+        owner = models.User(
+            email="owner.sunrise@gmail.com",
+            full_name="Old Owner",
+            hashed_password=utils.hash_password("changed-password-123"),
+            is_admin=False,
+            role="OWNER",
+            pharmacy=pharmacy,
+        )
+        db.add(owner)
+        db.commit()
+
+        assert ensure_demo_accounts(db) is True
+        db.refresh(owner)
+        assert utils.verify_password("12345678", owner.hashed_password)
+        assert owner.full_name == "Sunrise Owner"
+        assert owner.pharmacy.name == "Sunrise Pharmacy"
     finally:
         db.close()

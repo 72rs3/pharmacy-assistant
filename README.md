@@ -31,6 +31,13 @@ docker compose exec backend alembic upgrade head
 - Owner portal: `http://localhost:5173/portal/login`
 - Backend API: `http://localhost:9000`
 
+### Demo Logins
+When `ENABLE_DEMO_ACCOUNTS=1`, the app keeps these public demo logins stable on every startup:
+
+- Admin: `admin@example.com` / `12345678`
+- Sunrise Pharmacy owner: `owner.sunrise@gmail.com` / `12345678`
+- Faysal Pharmacy owner: `owner.faysal@gmail.com` / `12345678`
+
 ## Configuration
 Primary settings live in `.env` (used by Docker Compose).
 

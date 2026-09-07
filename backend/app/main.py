@@ -11,7 +11,7 @@ from sqlalchemy import inspect
 from app.db import Base, engine, ensure_sqlite_schema, SessionLocal
 from app import models
 from app.ai.provider_factory import get_ai_provider
-from app.bootstrap import ensure_default_pharmacy
+from app.bootstrap import ensure_default_pharmacy, ensure_demo_accounts
 from app.auth.routes import router as auth_router
 from app.auth.bootstrap import ensure_admin_user
 from app.routes.pharmacy_routes import router as pharmacy_router
@@ -86,6 +86,7 @@ def init_database() -> None:
 
     ensure_default_pharmacy()
     ensure_admin_user()
+    ensure_demo_accounts()
 
 
 @asynccontextmanager
