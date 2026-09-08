@@ -123,7 +123,7 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
     {
       id: "welcome",
       senderType: "AI",
-      text: `Hello! I am your ${brandName} Pharmacy AI assistant. How can I help you today?`,
+      text: `Hello! I am your ${brandName} AI assistant. How can I help you today?`,
       timestamp: new Date(),
       suggestions: defaultSuggestions,
       allowPrescriptionUpload: false,
@@ -177,7 +177,7 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
       return [
         {
           ...prev[0],
-          text: `Hello! I am your ${brandName} Pharmacy AI assistant. How can I help you today?`,
+          text: `Hello! I am your ${brandName} AI assistant. How can I help you today?`,
         },
         ...prev.slice(1),
       ];
@@ -288,7 +288,7 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
 
   const handleSend = async (overrideText) => {
     const trimmed = String(overrideText ?? inputValue).trim();
-    if (!trimmed) return;
+    if (!trimmed || isTyping) return;
 
     const userMessage = {
       id: `user-${Date.now()}`,
@@ -297,7 +297,7 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
       timestamp: new Date(),
     };
 
-    setMessages((prev) => [...prev, userMessage]);
+    setMessages((prev) => [...prev.filter((m) => !m.appointmentForm), userMessage]);
     if (overrideText == null) setInputValue("");
     setIsTyping(true);
 
@@ -358,7 +358,7 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
         id: `bot-${res.data?.interaction_id ?? Date.now()}`,
         senderType: "AI",
         text: answer,
-        timestamp: parseBackendDate(res.data?.created_at) ?? new Date(),
+        timestamp: new Date(),
         intent,
         allowPrescriptionUpload: false,
         freshness: includeFreshness ? { dataLastUpdatedAt, indexedAt } : null,

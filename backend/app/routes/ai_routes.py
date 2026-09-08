@@ -1600,6 +1600,18 @@ async def chat(
             verified_answer=immediate_answer,
         )
         answer = (gen.answer or "").strip()
+        if tool_ctx.intent == "MEDICINE_SEARCH" and not tool_ctx.items and not tool_ctx.suggestions:
+            answer = {
+                "en": "I couldn't confirm a matching medicine in this pharmacy's records. Could you share the brand name or check the spelling? The pharmacist can confirm availability.",
+                "ar": "لم أتمكن من تأكيد وجود دواء مطابق في سجلات الصيدلية. هل يمكنك ذكر الاسم التجاري أو التحقق من التهجئة؟ يمكن للصيدلي تأكيد التوفر.",
+                "fr": "Je ne peux pas confirmer de médicament correspondant dans les données de cette pharmacie. Pouvez-vous préciser la marque ou vérifier l'orthographe ? Le pharmacien peut confirmer la disponibilité.",
+            }.get(router.language, "I couldn't confirm a matching medicine. Please check with the pharmacy.")
+        if tool_ctx.intent == "CART" and any(a.type == "add_to_cart" for a in actions):
+            answer = {
+                "en": "Tap the Add button below to add the item to your cart.",
+                "ar": "اضغط على زر الإضافة أدناه لإضافة المنتج إلى سلتك.",
+                "fr": "Appuyez sur le bouton Ajouter ci-dessous pour ajouter le produit au panier.",
+            }.get(router.language, "Tap the Add button below to add the item to your cart.")
         if immediate_answer and (not answer or answer.lower().startswith("assistant temporarily unavailable")):
             answer = immediate_answer
         elif not answer:

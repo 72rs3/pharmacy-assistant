@@ -617,6 +617,9 @@ async def build_tool_context(
         immediate_answer = "Sure - please fill the appointment form below."
         return ctx, citations, actions, immediate_answer
 
+    if router.intent == "OUT_OF_SCOPE":
+        return ToolContext(intent="OUT_OF_SCOPE", language=router.language), [], [], None
+
     if router.intent == "CART":
         view_query = (router.query or "").strip().lower()
         is_view = any(word in view_query for word in ["what", "list", "show", "view", "check"])

@@ -441,3 +441,75 @@ def test_emergency_bypasses_model_outage(client, monkeypatch):
     assert response.status_code == 200
     assert "emergency" in response.json()["answer"].lower()
     assert all(a["type"] != "add_to_cart" for a in response.json()["actions"])
+
+
+def test_unrelated_request_redirects_without_tools(client, monkeypatch):
+    from app.ai import tri_model_router, generator
+    monkeypatch.setenv("AI_PROVIDER", "stub")
+    monkeypatch.setenv("OPENROUTER_ROUTER_MODEL", "test/router")
+    seed_pharmacy()
+
+    async def classify(**kwargs):
+        assert "translate water" in kwargs["messages"][0].content
+        return json.dumps({"intent": "OUT_OF_SCOPE", "confidence": 0.99})
+
+    async def forbidden(**kwargs):
+        raise AssertionError("Unrelated answers must not be generated")
+
+    monkeypatch.setattr(tri_model_router, "openrouter_chat", classify)
+    monkeypatch.setattr(generator, "openrouter_chat", forbidden)
+    response = client.post("/ai/chat", headers={"X-Pharmacy-Domain": "sunrise.local", "X-Chat-ID": "scope-test"},
+                           json={"message": "Translate water to Arabic"})
+    assert response.status_code == 200, response.text
+    assert response.json()["intent"] == "OUT_OF_SCOPE"
+    assert "pharmacy" in response.json()["answer"]
+    assert response.json()["actions"] == []
+    assert response.json()["cards"] == []
+
+
+def test_cart_button_does_not_claim_completed_mutation(client, monkeypatch):
+    from app.ai import tri_model_router, generator
+    monkeypatch.setenv("AI_PROVIDER", "stub")
+    monkeypatch.setenv("OPENROUTER_ROUTER_MODEL", "test/router")
+    monkeypatch.setenv("OPENROUTER_MAIN_MODEL", "test/main")
+    seed_pharmacy()
+
+    async def classify(**kwargs):
+        intent = "CART" if "yes add" in kwargs["messages"][-1].content else "MEDICINE_SEARCH"
+        return json.dumps({"intent": intent, "query": "Panadol", "confidence": 0.99})
+
+    async def generate(**kwargs):
+        return json.dumps({"answer": "Adding Panadol to your cart now.", "confidence": 0.9})
+
+    monkeypatch.setattr(tri_model_router, "openrouter_chat", classify)
+    monkeypatch.setattr(generator, "openrouter_chat", generate)
+    headers = {"X-Pharmacy-Domain": "sunrise.local", "X-Chat-ID": "cart-wording-test"}
+    first = client.post("/ai/chat", headers=headers, json={"message": "Panadol"})
+    assert first.status_code == 200
+    response = client.post("/ai/chat", headers=headers, json={"message": "yes add to", "session_id": first.json()["session_id"]})
+    assert response.status_code == 200, response.text
+    assert "Tap the Add" in response.json()["answer"]
+    assert any(a["type"] == "add_to_cart" for a in response.json()["actions"])
+
+
+def test_missing_medicine_is_not_reported_as_out_of_stock(client, monkeypatch):
+    from app.ai import tri_model_router, generator
+    monkeypatch.setenv("AI_PROVIDER", "stub")
+    monkeypatch.setenv("OPENROUTER_ROUTER_MODEL", "test/router")
+    monkeypatch.setenv("OPENROUTER_MAIN_MODEL", "test/main")
+    seed_pharmacy()
+
+    async def classify(**kwargs):
+        return json.dumps({"intent": "MEDICINE_SEARCH", "query": "paracetamol", "confidence": 0.99})
+
+    async def generate(**kwargs):
+        return json.dumps({"answer": "Paracetamol is unavailable.", "confidence": 0.9})
+
+    monkeypatch.setattr(tri_model_router, "openrouter_chat", classify)
+    monkeypatch.setattr(generator, "openrouter_chat", generate)
+    response = client.post("/ai/chat", headers={"X-Pharmacy-Domain": "sunrise.local", "X-Chat-ID": "no-match-test"},
+                           json={"message": "you have paracetemol?"})
+    assert response.status_code == 200, response.text
+    assert "couldn't confirm" in response.json()["answer"]
+    assert "unavailable" not in response.json()["answer"]
+    assert response.json()["cards"] == []

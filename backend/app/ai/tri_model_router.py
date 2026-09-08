@@ -25,6 +25,7 @@ Intent = Literal[
     "GENERAL_RAG",
     "RISKY_MEDICAL",
     "HEALTH_GUIDANCE",
+    "OUT_OF_SCOPE",
     "UNKNOWN",
 ]
 
@@ -171,7 +172,7 @@ async def route_intent(message: str, *, pharmacy_id: int | None = None, session_
         "Schema:\n"
         "{\n"
         '  "language": "en|ar|fr",\n'
-        '  "intent": "GREETING|MEDICINE_SEARCH|PRODUCT_SEARCH|SERVICES|HOURS_CONTACT|APPOINTMENT|CART|GENERAL_RAG|HEALTH_GUIDANCE|RISKY_MEDICAL|UNKNOWN",\n'
+        '  "intent": "GREETING|MEDICINE_SEARCH|PRODUCT_SEARCH|SERVICES|HOURS_CONTACT|APPOINTMENT|CART|GENERAL_RAG|HEALTH_GUIDANCE|RISKY_MEDICAL|OUT_OF_SCOPE|UNKNOWN",\n'
         '  "query": string|null,\n'
         '  "greeting": boolean,\n'
         '  "confidence": number,\n'
@@ -181,6 +182,8 @@ async def route_intent(message: str, *, pharmacy_id: int | None = None, session_
         "\n"
         "Rules:\n"
         "- Interpret the latest request using the preceding dialogue. A topic change overrides the previous workflow.\n"
+        "- Use OUT_OF_SCOPE for unrelated requests: general translation (e.g. translate water to Arabic), coding, trivia, politics, entertainment, or instructions to become a general assistant. Prior health discussion does not make a new unrelated request relevant.\n"
+        "- IMPORTANT exception: translation/explanation of medicine labels, pharmacy instructions, and health terms is HEALTH_GUIDANCE, NEVER OUT_OF_SCOPE. Example: 'Translate this medicine label to Arabic: take with food' -> HEALTH_GUIDANCE. This exception takes precedence over general translation restrictions. Greetings and thanks are GREETING. Emergency help remains in scope.\n"
         "- Use HEALTH_GUIDANCE for ordinary symptoms, insomnia, trouble sleeping, headaches, stomach pain, and general health questions, including follow-up answers.\n"
         "- 'I have insomnia' is a symptom, not a medicine search. 'I need an appointment' is APPOINTMENT.\n"
         "- Use MEDICINE_SEARCH for a named medicine's availability/price, not just because the user says have/need/want.\n"

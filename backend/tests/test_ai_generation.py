@@ -1,10 +1,26 @@
 import asyncio
 import json
+import pytest
 
 from app.ai import generator, tri_model_router
 from app.ai.openrouter_client import OpenRouterError
 from app.ai.providers.base import ChatMessage
 from app.ai.tool_executor import ToolContext
+
+
+@pytest.mark.parametrize("language", ["en", "ar", "fr"])
+def test_out_of_scope_cannot_generate_unrelated_answer(monkeypatch, language):
+    async def forbidden(**kwargs):
+        raise AssertionError("Out-of-scope requests must not reach the answer model")
+
+    monkeypatch.setattr(generator, "openrouter_chat", forbidden)
+    result = asyncio.run(generator.generate_answer(
+        tool_context=ToolContext(intent="OUT_OF_SCOPE", language=language),
+        user_message="Translate water to Arabic", router_confidence=0.99))
+    assert result.language == language
+    assert result.answer
+    assert not result.actions
+    assert not result.escalated
 
 
 def test_low_router_confidence_still_calls_main_model(monkeypatch):

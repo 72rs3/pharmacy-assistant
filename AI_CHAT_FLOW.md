@@ -21,6 +21,21 @@ and the legacy symptom questionnaires are not the normal public chat path.
 
 ## Boundaries
 
+Unrelated requests (including general translation, coding, and trivia) are classified
+as `OUT_OF_SCOPE` and receive a server-controlled redirect without inventory tools or
+answer generation. Medicine-label translation, health explanations, and greetings
+remain in scope. This is model-based classification, not a guarantee against every
+possible adversarial or ambiguous message.
+
+Cart buttons do not perform mutations until clicked, so CART responses explicitly
+ask the customer to tap Add. Empty medicine searches mean no confirmed matching record,
+not out-of-stock status. The current medicine schema has no verified active-ingredient
+field; do not infer brand/ingredient equivalence from model knowledge alone.
+
+The chat uses the browser clock for newly displayed messages. Sending a new chat
+message dismisses the appointment form without clearing its draft fields; booking
+buttons can reopen it, though the current booking initialization resets the draft.
+
 The assistant can explain general health information and ask relevant questions. It
 must not diagnose, prescribe, select a treatment for a patient, or give individualized
 doses. Persistent symptoms, medicine suitability, children, pregnancy, interactions,
