@@ -232,7 +232,10 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
                 : null,
           };
         });
-        setMessages((prev) => [prev[0], ...history]);
+        // Session creation triggers hydration too; do not overwrite an active local exchange.
+        setMessages((prev) => prev.some((message) => String(message.id).startsWith("user-"))
+          ? prev
+          : [prev[0], ...history]);
         setIsEscalated(escalated);
       } catch {
         // Keep existing messages on failure.
