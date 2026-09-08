@@ -61,7 +61,7 @@ services:
       - key: OPENROUTER_BASE_URL
         value: https://openrouter.ai/api/v1
       - key: OPENROUTER_ROUTER_MODEL
-        value: google/gemini-2.0-flash-001
+        value: openai/gpt-4o-mini
       - key: OPENROUTER_MAIN_MODEL
         value: openai/gpt-4o-mini
       - key: OPENROUTER_FALLBACK_MODEL
@@ -83,7 +83,7 @@ services:
       - key: OPENROUTER_MAX_TOKENS
         value: "400"
       - key: OPENROUTER_ROUTER_MAX_TOKENS
-        value: "150"
+        value: "300"
       - key: OPENROUTER_MAIN_MAX_TOKENS
         value: "600"
       - key: OPENROUTER_FALLBACK_MAX_TOKENS

@@ -74,6 +74,8 @@ def _should_stub_fail_main(model: str) -> bool:
 
 def _stub_router(message: str) -> str:
     low = (message or "").strip().lower()
+    if any(word in low for word in ["insomnia", "can't sleep", "head hurts", "headache", "stomach", "hurting"]):
+        return json.dumps({"language": "en", "intent": "HEALTH_GUIDANCE", "query": message, "confidence": 0.8, "risk": "low"})
     if not low:
         return json.dumps({"language": "en", "intent": "UNKNOWN", "query": None, "greeting": False, "confidence": 0.0, "risk": "low", "clarifying_questions": []})
     if any(ch in low for ch in ["مرحبا", "اهلا"]):
@@ -121,6 +123,10 @@ def _stub_generate(tool_context: dict) -> str:
     citations = tool_context.get("citations") or []
     quick_replies = tool_context.get("quick_replies") or []
     escalated = bool(tool_context.get("escalated") or False)
+    if tool_context.get("verified_answer"):
+        answer = tool_context["verified_answer"]
+    if intent == "HEALTH_GUIDANCE":
+        answer = "How long has this been happening, and how is it affecting your day? A pharmacist can help you decide on next steps."
 
     if intent == "MEDICINE_SEARCH":
         found = bool(tool_context.get("found"))
@@ -169,13 +175,14 @@ async def openrouter_chat(
     messages: list[ChatMessage],
     temperature: float = 0.2,
     max_tokens: int = 400,
+    json_mode: bool = False,
 ) -> str:
     if _is_stub_mode():
         if _should_stub_fail_main(model):
             raise OpenRouterError(503, "stub: simulated main model outage")
         system = next((m.content for m in messages if m.role == "system"), "")
         user = next((m.content for m in reversed(messages) if m.role == "user"), "")
-        if "STRICT JSON" in system and "intent" in system and "confidence" in system:
+        if "intent classifier" in system:
             return _stub_router(user.replace("Message:", "").strip())
         if "tool_context" in system or "TOOL_CONTEXT" in system:
             try:
@@ -205,6 +212,7 @@ async def openrouter_chat(
                         "messages": [{"role": m.role, "content": m.content} for m in messages],
                         "temperature": float(temperature),
                         "max_tokens": int(max_tokens),
+                        **({"response_format": {"type": "json_object"}} if json_mode else {}),
                     },
                 )
             elapsed_ms = int((time.time() - start) * 1000)
@@ -235,6 +243,8 @@ async def openrouter_chat(
             if attempt >= retries:
                 break
             continue
+    if isinstance(last_error, OpenRouterError):
+        raise last_error
     raise OpenRouterError(None, str(last_error or "unknown error"))
 
 

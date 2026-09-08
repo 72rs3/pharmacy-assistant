@@ -684,6 +684,12 @@ async def build_tool_context(
         immediate_answer = "Which medicine or product should I add to your cart?"
         return ctx, citations, actions, immediate_answer
 
+    if router.intent == "HEALTH_GUIDANCE":
+        actions = [schemas.AIAction(type="escalate_to_pharmacist", label="Talk to pharmacist")]
+        ctx = ToolContext(intent="HEALTH_GUIDANCE", language=router.language,
+                          items=[], citations=[], cards=[], quick_replies=["Book appointment"])
+        return ctx, [], actions, None
+
     if router.intent == "RISKY_MEDICAL":
         contact_bits = []
         if pharmacy and pharmacy.contact_phone:
@@ -692,11 +698,12 @@ async def build_tool_context(
             contact_bits.append(f"Email: {pharmacy.contact_email}")
         contact_text = f" {' '.join(contact_bits)}" if contact_bits else ""
         immediate_answer = (
-            "This looks like a medical-risk question. I will escalate this to the pharmacist for review. "
+            "This question needs a pharmacist's review. Tap 'Talk to pharmacist' to start a consultation. "
             "If this is urgent, seek emergency care."
             + contact_text
         )
         ctx = ToolContext(intent="RISKY_MEDICAL", language=router.language, escalated=True, found=False, items=[], suggestions=[], citations=[], cards=[], quick_replies=_default_quick_replies())
+        actions = [schemas.AIAction(type="escalate_to_pharmacist", label="Talk to pharmacist")]
         return ctx, [], actions, immediate_answer
 
     if router.intent == "MEDICINE_SEARCH":

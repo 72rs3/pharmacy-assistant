@@ -1,4 +1,5 @@
 import os
+import json
 import sys
 from pathlib import Path
 
@@ -333,7 +334,8 @@ def test_medical_guardrails_risky_prompt(client: TestClient):
     res = client.post("/ai/chat", headers=headers, json={"message": "Can I change the dosage for this medicine?"})
     assert res.status_code == 200
     assert res.json()["escalated_to_human"] is True
-    assert "not medical advice" in res.json()["answer"].lower()
+    assert "pharmacist" in res.json()["answer"].lower()
+    assert any(a["type"] == "escalate_to_pharmacist" for a in res.json()["actions"])
 
 
 def test_arabic_greeting_language_detection(client: TestClient):
@@ -368,3 +370,74 @@ def test_main_outage_falls_back(client: TestClient):
     res = client.post("/ai/chat", headers=headers, json={"message": "tell me about your services"})
     assert res.status_code == 200
     assert "temporarily unavailable" not in res.json()["answer"].lower()
+
+
+def test_openrouter_history_topic_change_and_untrusted_actions(client, monkeypatch):
+    from app.ai import generator, tri_model_router
+    from app.ai.provider_factory import get_ai_provider
+
+    monkeypatch.setenv("AI_PROVIDER", "stub")
+    monkeypatch.setenv("OPENROUTER_ROUTER_MODEL", "test/router")
+    monkeypatch.setenv("OPENROUTER_MAIN_MODEL", "test/main")
+    get_ai_provider.cache_clear()
+    seed_pharmacy()
+    router_calls, generation_calls = [], []
+
+    async def classify(**kwargs):
+        router_calls.append(kwargs["messages"])
+        latest = kwargs["messages"][-1].content
+        intent = "APPOINTMENT" if "appointment" in latest else "HEALTH_GUIDANCE"
+        return json.dumps({"intent": intent, "query": latest, "confidence": 0.9})
+
+    async def generate(**kwargs):
+        generation_calls.append(kwargs["messages"])
+        latest = kwargs["messages"][-1].content
+        answer = "How long have you had trouble sleeping?"
+        if "Three nights" in latest:
+            answer = "For those three nights, has it affected your daytime activities?"
+        if '"intent": "APPOINTMENT"' in latest:
+            answer = "Use Book appointment to choose a time. No prescription required."
+        return json.dumps({"answer": answer, "confidence": 0.9,
+                           "actions": [{"type": "upload_prescription", "label": "Upload prescription"},
+                                       {"type": "add_to_cart", "label": "Add", "payload": {"medicine_id": 99999}}],
+                           "quick_replies": ["Upload prescription"]})
+
+    monkeypatch.setattr(tri_model_router, "openrouter_chat", classify)
+    monkeypatch.setattr(generator, "openrouter_chat", generate)
+    headers = {"X-Pharmacy-Domain": "sunrise.local", "X-Chat-ID": "conversation-test"}
+    for message in ["I have insomnia", "Three nights", "I want to book an appointment"]:
+        response = client.post("/ai/chat", headers=headers, json={"message": message})
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert all(a["type"] not in {"upload_prescription", "add_to_cart"} for a in body["actions"])
+        assert "Upload prescription" not in body["quick_replies"]
+    assert body["intent"] == "APPOINTMENT"
+    assert [a["type"] for a in body["actions"]] == ["book_appointment"]
+    assert "No prescription required" in body["answer"]
+    assert len(router_calls) == len(generation_calls) == 3
+    for calls in [router_calls, generation_calls]:
+        assert [(m.role, m.content) for m in calls[1][1:-1]] == [
+            ("user", "I have insomnia"), ("assistant", "How long have you had trouble sleeping?")]
+    other = client.post("/ai/chat", headers={**headers, "X-Chat-ID": "other-customer"},
+                        json={"message": "I have insomnia", "session_id": body["session_id"]})
+    assert other.status_code == 200
+    assert len(router_calls[-1]) == len(generation_calls[-1]) == 2
+
+
+def test_emergency_bypasses_model_outage(client, monkeypatch):
+    from app.ai import tri_model_router
+    from app.ai.provider_factory import get_ai_provider
+
+    monkeypatch.setenv("AI_PROVIDER", "stub")
+    get_ai_provider.cache_clear()
+    seed_pharmacy()
+
+    async def unavailable(*args, **kwargs):
+        raise AssertionError("Emergency guidance must not wait for OpenRouter")
+
+    monkeypatch.setattr(tri_model_router, "openrouter_chat", unavailable)
+    response = client.post("/ai/chat", headers={"X-Pharmacy-Domain": "sunrise.local", "X-Chat-ID": "urgent-test"},
+                           json={"message": "I have chest pain and can't breathe"})
+    assert response.status_code == 200
+    assert "emergency" in response.json()["answer"].lower()
+    assert all(a["type"] != "add_to_cart" for a in response.json()["actions"])

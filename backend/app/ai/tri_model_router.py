@@ -3,12 +3,15 @@ from __future__ import annotations
 import json
 import os
 import re
+import logging
 from typing import Literal
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field
 
 from app.ai.openrouter_client import openrouter_chat
 from app.ai.providers.base import ChatMessage
+
+_logger = logging.getLogger(__name__)
 
 
 Intent = Literal[
@@ -21,6 +24,7 @@ Intent = Literal[
     "CART",
     "GENERAL_RAG",
     "RISKY_MEDICAL",
+    "HEALTH_GUIDANCE",
     "UNKNOWN",
 ]
 
@@ -129,6 +133,10 @@ def _heuristic_fallback(message: str) -> RouterIntent:
         w in low for w in ["chest pain", "shortness of breath", "seizure", "overdose"]
     ):
         return RouterIntent(language=lang, intent="RISKY_MEDICAL", confidence=0.9, risk="high", greeting=greeting)
+    if any(w in tokens for w in {"appointment", "booking", "consultation", "vaccination"}) or "book a" in low:
+        return RouterIntent(language=lang, intent="APPOINTMENT", confidence=0.8, query=message, greeting=greeting)
+    if any(w in low for w in ["insomnia", "can't sleep", "cannot sleep", "trouble sleeping", "head hurts", "headache", "stomach", "hurting", "diarrhea", "dizzy"]):
+        return RouterIntent(language=lang, intent="HEALTH_GUIDANCE", confidence=0.6, query=message, greeting=greeting)
     if _looks_like_availability_request(message):
         return RouterIntent(language=lang, intent="MEDICINE_SEARCH", confidence=0.7, risk="low", query=message.strip(), greeting=greeting)
     if any(w in tokens for w in {"hours", "open", "opening", "closing", "contact", "phone", "email", "address"}):
@@ -148,9 +156,13 @@ def _heuristic_fallback(message: str) -> RouterIntent:
     return RouterIntent(language=lang, intent="GENERAL_RAG", confidence=0.5, risk="low", query=message.strip(), greeting=greeting)
 
 
-async def route_intent(message: str, *, pharmacy_id: int | None = None, session_id: str | None = None) -> RouterIntent:
-    model = (os.getenv("OPENROUTER_ROUTER_MODEL") or "").strip()
-    if not model:
+async def route_intent(message: str, *, pharmacy_id: int | None = None, session_id: str | None = None,
+                       history: list[ChatMessage] | None = None) -> RouterIntent:
+    models = list(dict.fromkeys(value.strip() for value in [
+        os.getenv("OPENROUTER_ROUTER_MODEL", ""), os.getenv("OPENROUTER_MAIN_MODEL", ""),
+        os.getenv("OPENROUTER_CHAT_MODEL", "")
+    ] if value.strip()))
+    if not models:
         return _heuristic_fallback(message)
 
     system = (
@@ -159,7 +171,7 @@ async def route_intent(message: str, *, pharmacy_id: int | None = None, session_
         "Schema:\n"
         "{\n"
         '  "language": "en|ar|fr",\n'
-        '  "intent": "GREETING|MEDICINE_SEARCH|PRODUCT_SEARCH|SERVICES|HOURS_CONTACT|APPOINTMENT|CART|GENERAL_RAG|RISKY_MEDICAL|UNKNOWN",\n'
+        '  "intent": "GREETING|MEDICINE_SEARCH|PRODUCT_SEARCH|SERVICES|HOURS_CONTACT|APPOINTMENT|CART|GENERAL_RAG|HEALTH_GUIDANCE|RISKY_MEDICAL|UNKNOWN",\n'
         '  "query": string|null,\n'
         '  "greeting": boolean,\n'
         '  "confidence": number,\n'
@@ -168,7 +180,13 @@ async def route_intent(message: str, *, pharmacy_id: int | None = None, session_
         "}\n"
         "\n"
         "Rules:\n"
-        "- Prefer MEDICINE_SEARCH when the user mentions a drug/medicine name or says looking for/need/price/stock.\n"
+        "- Interpret the latest request using the preceding dialogue. A topic change overrides the previous workflow.\n"
+        "- Use HEALTH_GUIDANCE for ordinary symptoms, insomnia, trouble sleeping, headaches, stomach pain, and general health questions, including follow-up answers.\n"
+        "- 'I have insomnia' is a symptom, not a medicine search. 'I need an appointment' is APPOINTMENT.\n"
+        "- Use MEDICINE_SEARCH for a named medicine's availability/price, not just because the user says have/need/want.\n"
+        "- Resolve 'price?' or 'is it available?' to the medicine from the conversation; query must contain its name.\n"
+        "- For APPOINTMENT use the booking workflow even after discussing prescription medicines; booking does not require a prescription.\n"
+        "- Set query to the relevant search terms or full request for non-search intents.\n"
         "- Prefer PRODUCT_SEARCH for toothbrush/toothpaste/sunblock/vitamins/etc.\n"
         "- If pregnancy/child/severe symptoms/interactions/dosing/side effects -> intent=RISKY_MEDICAL, risk=high.\n"
         "- If asking only about availability/ordering (even antibiotics/controlled meds), use MEDICINE_SEARCH.\n"
@@ -176,30 +194,20 @@ async def route_intent(message: str, *, pharmacy_id: int | None = None, session_
         "- Always set confidence 0..1.\n"
     )
     user = f"Message: {message}"
-    try:
-        raw = await openrouter_chat(
-            model=model,
-            messages=[ChatMessage(role="system", content=system), ChatMessage(role="user", content=user)],
-            temperature=0.0,
-            max_tokens=int(os.getenv("OPENROUTER_ROUTER_MAX_TOKENS", os.getenv("OPENROUTER_CLASSIFIER_MAX_TOKENS", "150"))),
-        )
-        extracted = _extract_json_object(raw)
-        if not extracted:
-            return _heuristic_fallback(message)
-        data = json.loads(extracted)
-        result = RouterIntent.model_validate(data)
-        if result.intent == "RISKY_MEDICAL" and _looks_like_availability_request(message):
-            return RouterIntent(
-                language=result.language,
-                intent="MEDICINE_SEARCH",
-                query=message.strip() or None,
-                greeting=result.greeting,
-                confidence=max(0.55, result.confidence),
-                risk="low",
-                clarifying_questions=[],
+    for model in models:
+        try:
+            raw = await openrouter_chat(
+                model=model,
+                messages=[ChatMessage(role="system", content=system), *(history or []), ChatMessage(role="user", content=user)],
+                temperature=0.0,
+                max_tokens=max(300, int(os.getenv("OPENROUTER_ROUTER_MAX_TOKENS", "300"))),
+                json_mode=True,
             )
-        return result
-    except (ValidationError, json.JSONDecodeError):
-        return _heuristic_fallback(message)
-    except Exception:
-        return _heuristic_fallback(message)
+            extracted = _extract_json_object(raw)
+            if not extracted:
+                raise ValueError("router did not return JSON")
+            return RouterIntent.model_validate(json.loads(extracted))
+        except Exception as exc:
+            _logger.warning("AI router failed model=%s error_type=%s status=%s",
+                            model, type(exc).__name__, getattr(exc, "status_code", None))
+    return _heuristic_fallback(message)

@@ -1416,6 +1416,9 @@ def _build_ai_metadata(
 
 def _enforce_action_policy(tool_ctx: object, actions: list[schemas.AIAction]) -> list[schemas.AIAction]:
     intent = str(getattr(tool_ctx, "intent", "") or "")
+    if intent == "APPOINTMENT":
+        return [schemas.AIAction(type="book_appointment", label="Book appointment", payload={})]
+    actions = [a for a in actions if a.type not in {"upload_prescription", "place_rx_order"}]
     if intent != "MEDICINE_SEARCH":
         return actions
 
@@ -1532,6 +1535,7 @@ async def chat(
     session_id = session.session_id
     system_message: str | None = None
 
+    history = session_memory.conversation_messages(db, session)
     add_message(db, session, "USER", message)
 
     if session.status == "ESCALATED":
@@ -1567,118 +1571,19 @@ async def chat(
             system_message=None,
         )
 
-    last_ai = (
-        db.query(models.ChatMessage)
-        .filter(models.ChatMessage.session_id == session.id, models.ChatMessage.sender_type == "AI")
-        .order_by(models.ChatMessage.created_at.desc())
-        .first()
-    )
-    last_ai_intent = ""
-    if last_ai and isinstance(last_ai.meta, dict):
-        last_ai_intent = str(last_ai.meta.get("intent") or "")
-
     try:
         rag_service.ensure_pharmacy_playbook(db, pharmacy_id)
         db.commit()
+        # Emergencies must remain actionable even if the model is unavailable.
         triage = _maybe_handle_urgent_red_flags(db, pharmacy_id, customer_id, session, message)
         if triage is not None:
             session_memory.append_turns(db, pharmacy_id, session_id, message, triage.answer)
             return triage
-        triage = _maybe_handle_last_medicines(db, pharmacy_id, customer_id, session, message)
-        if triage is not None:
-            session_memory.append_turns(db, pharmacy_id, session_id, message, triage.answer)
-            return triage
-        triage = _maybe_handle_search_again(db, pharmacy_id, customer_id, session, message)
-        if triage is not None:
-            session_memory.append_turns(db, pharmacy_id, session_id, message, triage.answer)
-            return triage
-        triage = await _maybe_handle_headache_triage(db, pharmacy_id, customer_id, session, message)
-        if triage is not None:
-            session_memory.append_turns(db, pharmacy_id, session_id, message, triage.answer)
-            return triage
-        triage = await _maybe_handle_abdominal_pain_triage(db, pharmacy_id, customer_id, session, message)
-        if triage is not None:
-            session_memory.append_turns(db, pharmacy_id, session_id, message, triage.answer)
-            return triage
-        triage = await _maybe_handle_diarrhea_triage(db, pharmacy_id, customer_id, session, message)
-        if triage is not None:
-            session_memory.append_turns(db, pharmacy_id, session_id, message, triage.answer)
-            return triage
-        triage = await _maybe_handle_dizzy_triage(db, pharmacy_id, customer_id, session, message)
-        if triage is not None:
-            session_memory.append_turns(db, pharmacy_id, session_id, message, triage.answer)
-            return triage
-        triage = await _maybe_handle_msk_pain_triage(db, pharmacy_id, customer_id, session, message)
-        if triage is not None:
-            session_memory.append_turns(db, pharmacy_id, session_id, message, triage.answer)
-            return triage
-        is_risky, reason = detect_risk(message)
-        if is_risky:
-            answer = (
-                "This may require a pharmacist. Tap 'Talk to pharmacist' to start a consultation. "
-                "If symptoms are severe or urgent, seek medical care immediately. "
-                "This is not medical advice."
-            )
-            interaction = models.AIInteraction(
-                customer_id=customer_id,
-                customer_query=message,
-                ai_response=answer,
-                confidence_score=0.0,
-                escalated_to_human=True,
-                created_at=datetime.utcnow(),
-                pharmacy_id=pharmacy_id,
-            )
-            db.add(interaction)
-            db.commit()
-            db.refresh(interaction)
-            add_message(
-                db,
-                session,
-                "AI",
-                interaction.ai_response,
-                _build_ai_metadata(
-                    intent="RISKY_MEDICAL",
-                    actions=[schemas.AIAction(type="escalate_to_pharmacist", label="Talk to pharmacist")],
-                    cards=[],
-                    quick_replies=[],
-                    data_last_updated_at=None,
-                    indexed_at=None,
-                ),
-            )
-            session_memory.append_turns(db, pharmacy_id, session_id, message, interaction.ai_response)
-            _log(db, pharmacy_id, "chat", f"chat_id={customer_id} confidence=0.00 recommended_escalation=1 rag_top_k=0 retrieved_chunks=[]")
-            db.commit()
-            return schemas.AIChatOut(
-                interaction_id=interaction.id,
-                customer_id=customer_id,
-                session_id=session_id,
-                answer=interaction.ai_response,
-                citations=[],
-                cards=[],
-                actions=[schemas.AIAction(type="escalate_to_pharmacist", label="Talk to pharmacist")],
-                quick_replies=[],
-                confidence_score=interaction.confidence_score,
-                escalated_to_human=interaction.escalated_to_human,
-                intent="RISKY_MEDICAL",
-                created_at=interaction.created_at,
-                data_last_updated_at=None,
-                indexed_at=None,
-                system_message=system_message,
-            )
         turns = session_memory.load_turns(db, pharmacy_id, session_id)
-        memory_context = session_memory.user_context(turns)
-        if last_ai_intent == "MEDICINE_SEARCH_PROMPT":
-            router = RouterIntent(
-                language="en",
-                intent="MEDICINE_SEARCH",
-                query=message.strip(),
-                greeting=False,
-                confidence=0.9,
-                risk="low",
-                clarifying_questions=[],
-            )
-        else:
-            router = await route_intent(message, pharmacy_id=pharmacy_id, session_id=session_id)
+        router = await route_intent(message, pharmacy_id=pharmacy_id, session_id=session_id, history=history)
+        is_risky, _ = detect_risk(message)
+        if is_risky or router.risk == "high":
+            router = router.model_copy(update={"intent": "RISKY_MEDICAL", "risk": "high"})
         tool_ctx, citations, actions, immediate_answer = await build_tool_context(
             db,
             pharmacy_id=pharmacy_id,
@@ -1690,50 +1595,25 @@ async def chat(
             tool_context=tool_ctx,
             user_message=message,
             router_confidence=float(router.confidence or 0.0),
+            history=history,
+            allowed_actions=[a.model_dump() for a in (actions or [])],
+            verified_answer=immediate_answer,
         )
         answer = (gen.answer or "").strip()
-        multi_medicine = bool(getattr(tool_ctx, "multi_query", False))
-        if multi_medicine and immediate_answer:
-            answer = immediate_answer
-        elif immediate_answer and (not answer or answer.lower().startswith("assistant temporarily unavailable")):
+        if immediate_answer and (not answer or answer.lower().startswith("assistant temporarily unavailable")):
             answer = immediate_answer
         elif not answer:
             answer = immediate_answer or ""
-        if tool_ctx.intent == "RISKY_MEDICAL" or router.intent == "RISKY_MEDICAL":
-            answer = (
-                "This may require a pharmacist. Tap 'Talk to pharmacist' to start a consultation. "
-                "If symptoms are severe or urgent, seek medical care immediately."
-            )
+        if tool_ctx.intent == "RISKY_MEDICAL" or router.intent == "RISKY_MEDICAL" or gen.escalated:
             actions = [schemas.AIAction(type="escalate_to_pharmacist", label="Talk to pharmacist")]
-        tool_actions = actions or []
-        # Prefer tool actions; only use generator actions when tool actions are empty.
-        if gen.actions and not multi_medicine and not tool_actions:
-            actions = [
-                schemas.AIAction(
-                    type=a.type,
-                    label=a.label,
-                    medicine_id=(
-                        int(a.payload.get("medicine_id"))
-                        if isinstance(a.payload, dict) and a.payload.get("medicine_id") is not None
-                        else None
-                    ),
-                    product_id=(
-                        int(a.payload.get("product_id"))
-                        if isinstance(a.payload, dict) and a.payload.get("product_id") is not None
-                        else None
-                    ),
-                    payload=a.payload,
-                )
-                for a in gen.actions
-            ]
         else:
-            actions = tool_actions
-        actions = _enforce_action_policy(tool_ctx, actions or [])
+            # Only the backend can authorize workflow buttons and tenant-scoped item IDs.
+            actions = _enforce_action_policy(tool_ctx, actions or [])
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
     # Escalation is explicit: only the customer can start a pharmacist consultation via the intake flow.
-    escalated = False
+    escalated = bool(tool_ctx.escalated or gen.escalated)
     interaction = models.AIInteraction(
         customer_id=customer_id,
         customer_query=message,
@@ -1745,7 +1625,7 @@ async def chat(
     )
     db.add(interaction)
     db.flush()
-    quick_replies_source = tool_ctx.quick_replies or [] if multi_medicine else (gen.quick_replies or tool_ctx.quick_replies or [])
+    quick_replies_source = tool_ctx.quick_replies or []
     add_message(
         db,
         session,
@@ -1767,8 +1647,9 @@ async def chat(
         pharmacy_id,
         "chat",
         (
-            f"chat_id={customer_id} confidence={float(gen.confidence if gen.answer else 0.0):.2f} escalated=False "
+            f"chat_id={customer_id} confidence={float(gen.confidence if gen.answer else 0.0):.2f} escalated={escalated} "
             f"router_intent={router.intent} router_conf={router.confidence:.2f} "
+            f"generation_model={gen.model or 'unavailable'} "
             f"rag_top_k={int(get_rag_config().top_k)} retrieved_chunks=[{chunk_log}] actions=[{action_log}]"
         ),
     )
@@ -1784,7 +1665,7 @@ async def chat(
         citations=[schemas.AICitation(**c) for c in (tool_ctx.citations or [])] if tool_ctx.citations else citations,
         cards=(tool_ctx.cards or []),
         actions=actions,
-        quick_replies=_filter_quick_replies(actions, (gen.quick_replies or tool_ctx.quick_replies or [])),
+        quick_replies=_filter_quick_replies(actions, quick_replies_source),
         confidence_score=interaction.confidence_score,
         escalated_to_human=interaction.escalated_to_human,
         intent=tool_ctx.intent,

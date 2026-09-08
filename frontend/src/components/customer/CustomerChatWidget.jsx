@@ -68,11 +68,6 @@ const dedupeAcross = (primary, secondary) => {
   return secondary.filter((item) => !seen.has(normalizeReplyKey(item)));
 };
 
-const shouldOfferPrescriptionUpload = (text) => {
-  const normalized = (text ?? "").toLowerCase();
-  return normalized.includes("prescription required") || normalized.includes("requires prescription");
-};
-
 const parseBackendDate = (value) => {
   if (!value) return null;
   if (value instanceof Date) return value;
@@ -230,7 +225,7 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
             actions,
             cards,
             quickReplies,
-            allowPrescriptionUpload: shouldOfferPrescriptionUpload(text),
+            allowPrescriptionUpload: false,
             freshness:
               dataLastUpdatedAt || indexedAt
                 ? { dataLastUpdatedAt, indexedAt }
@@ -365,7 +360,7 @@ export default function CustomerChatWidget({ isOpen, onClose, brandName = "Sunr"
         text: answer,
         timestamp: parseBackendDate(res.data?.created_at) ?? new Date(),
         intent,
-        allowPrescriptionUpload: shouldOfferPrescriptionUpload(answer),
+        allowPrescriptionUpload: false,
         freshness: includeFreshness ? { dataLastUpdatedAt, indexedAt } : null,
         actions: Array.isArray(res.data?.actions) ? res.data.actions : [],
         cards,

@@ -135,12 +135,13 @@ def test_ai_chat_escalation_owner_reply_roundtrip(client: TestClient):
 @pytest.mark.parametrize(
     ("message", "expected_intent"),
     [
-        ("hello my head hurts", "HEADACHE_TRIAGE_SEVERITY"),
-        ("my head hurts", "HEADACHE_TRIAGE_SEVERITY"),
-        ("my stomach is hurting", "ABDOMINAL_TRIAGE_SEVERITY"),
+        ("hello my head hurts", "HEALTH_GUIDANCE"),
+        ("my head hurts", "HEALTH_GUIDANCE"),
+        ("my stomach is hurting", "HEALTH_GUIDANCE"),
+        ("I have insomnia", "HEALTH_GUIDANCE"),
     ],
 )
-def test_casual_symptom_messages_enter_triage(client: TestClient, message: str, expected_intent: str):
+def test_casual_symptoms_use_health_conversation(client: TestClient, message: str, expected_intent: str):
     import os
 
     os.environ["AI_PROVIDER"] = "stub"
@@ -171,5 +172,6 @@ def test_casual_symptom_messages_enter_triage(client: TestClient, message: str, 
     assert response.status_code == 200
     body = response.json()
     assert body["intent"] == expected_intent
-    assert "scale of 1-10" in body["answer"]
+    assert "How long" in body["answer"]
+    assert any(a["type"] == "escalate_to_pharmacist" for a in body["actions"])
     assert body["quick_replies"]

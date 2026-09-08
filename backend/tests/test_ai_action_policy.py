@@ -53,3 +53,9 @@ def test_otc_out_of_stock_removes_add_to_cart_action():
     fixed = _enforce_action_policy(tool_ctx, actions)
     assert all(a.type != "add_to_cart" for a in fixed)
 
+
+def test_booking_never_returns_prescription_upload():
+    ctx = ToolContext(intent="APPOINTMENT", language="en")
+    fixed = _enforce_action_policy(ctx, [schemas.AIAction(type="upload_prescription", label="Upload")])
+    assert [a.type for a in fixed] == ["book_appointment"]
+

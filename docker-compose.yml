@@ -50,7 +50,7 @@ services:
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
       # 3-model routing (recommended)
-      OPENROUTER_ROUTER_MODEL: ${OPENROUTER_ROUTER_MODEL:-google/gemini-2.0-flash-001}
+      OPENROUTER_ROUTER_MODEL: ${OPENROUTER_ROUTER_MODEL:-openai/gpt-4o-mini}
       OPENROUTER_MAIN_MODEL: ${OPENROUTER_MAIN_MODEL:-openai/gpt-4o-mini}
       OPENROUTER_FALLBACK_MODEL: ${OPENROUTER_FALLBACK_MODEL:-meta-llama/llama-3.3-70b-instruct}
       # Back-compat single-model setting (not used by the 3-model router if MAIN/FALLBACK set)

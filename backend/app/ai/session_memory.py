@@ -9,10 +9,25 @@ from uuid import uuid4
 from sqlalchemy.orm import Session
 
 from app import models
+from app.ai.providers.base import ChatMessage
 
 
 _TTL_MINUTES = int(os.getenv("CHAT_SESSION_TIMEOUT_MINUTES", "5"))
 _STATE_KEY_PREFIX = "state:"
+
+
+def conversation_messages(db: Session, session: models.ChatSession) -> list[ChatMessage]:
+    """Recent dialogue from the already-authorized session, excluding internal state."""
+    rows = (
+        db.query(models.ChatMessage)
+        .filter(models.ChatMessage.session_id == session.id,
+                models.ChatMessage.sender_type.in_(["USER", "AI"]))
+        .order_by(models.ChatMessage.created_at.desc(), models.ChatMessage.id.desc())
+        .limit(24)
+        .all()
+    )
+    return [ChatMessage(role="user" if row.sender_type == "USER" else "assistant",
+                        content=(row.text or "")[:3000]) for row in reversed(rows)]
 
 
 def new_session_id() -> str:
